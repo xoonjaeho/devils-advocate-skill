@@ -51,10 +51,17 @@ def is_binary(path: Path) -> bool:
     return b"\x00" in chunk
 
 
+def fence(text: str, lang: str) -> str:
+    """Fence `text` with one more backtick than its longest backtick run (min 3)."""
+    longest = max((len(m.group(0)) for m in re.finditer(r"`+", text)), default=0)
+    ticks = "`" * max(3, longest + 1)
+    return f"{ticks}{lang}\n{text}\n{ticks}\n"
+
+
 def fence_file(path: Path, heading: str) -> str:
     lang = path.suffix.lstrip(".")
     text = path.read_text(encoding="utf-8", errors="replace")
-    return f"### {heading}\n```{lang}\n{text}\n```\n"
+    return f"### {heading}\n{fence(text, lang)}"
 
 
 def walk_files(root: Path):
@@ -83,6 +90,9 @@ def run_git_diff(target: str) -> str:
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
         sys.exit(1)
+    if not proc.stdout:
+        sys.stderr.write(f"empty diff for {target}\n")
+        sys.exit(1)
     return proc.stdout
 
 
@@ -96,17 +106,17 @@ def get_base_sha() -> str:
 
 
 def fill_template(text: str, target: str, base_sha: str, date_str: str, focus: str, method: str, kind: str, lang: str) -> str:
-    text = re.sub(r"(?m)^Reviewer:.*\n", "", text, count=1)
+    text = re.sub(r"(?m)^Reviewer:.*\n", lambda m: "", text, count=1)
     text = re.sub(
         r"(?m)^Target: .*$",
-        f"Target: {target}   Base: {base_sha}   Date: {date_str}",
+        lambda m: f"Target: {target}   Base: {base_sha}   Date: {date_str}",
         text,
         count=1,
     )
-    text = re.sub(r"Focus: <[^<>\n]*>", f"Focus: {focus}", text, count=1)
+    text = re.sub(r"Focus: <[^<>\n]*>", lambda m: f"Focus: {focus}", text, count=1)
     text = re.sub(
         r"(?m)^Method: .*$",
-        f"Method: {method}   Kind: {kind}   Lang: {lang}",
+        lambda m: f"Method: {method}   Kind: {kind}   Lang: {lang}",
         text,
         count=1,
     )
@@ -124,7 +134,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         target_section = build_target_section(target_path)
     else:
         diff_text = run_git_diff(args.target)
-        target_section = f"## Target\n\n```diff\n{diff_text}```\n"
+        target_section = f"## Target\n\n{fence(diff_text, 'diff')}"
 
     base_sha = get_base_sha()
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -161,16 +171,35 @@ def strip_glyph(text: str) -> str:
     return re.sub(r"^[\W]+", "", text.strip(), flags=re.UNICODE).strip()
 
 
+def compute_in_fence(lines: list[str]) -> list[bool]:
+    """True for each line inside (or opening/closing) a ``` fence."""
+    flags = []
+    state = False
+    for line in lines:
+        if line.strip().startswith("```"):
+            state = not state
+            flags.append(True)
+        else:
+            flags.append(state)
+    return flags
+
+
+def visible(lines: list[str]) -> list[str]:
+    """`lines` with fenced content blanked out, for scans over structural markers."""
+    return ["" if in_fence else line for line, in_fence in zip(lines, compute_in_fence(lines))]
+
+
 def extract_section(lines: list[str], name: str) -> list[str]:
+    vis = visible(lines)
     start = None
-    for i, line in enumerate(lines):
+    for i, line in enumerate(vis):
         if line.startswith("## ") and strip_glyph(line[3:]) == name:
             start = i + 1
             break
     if start is None:
         return []
     end = start
-    while end < len(lines) and not lines[end].startswith("## "):
+    while end < len(vis) and not vis[end].startswith("## "):
         end += 1
     return lines[start:end]
 
@@ -186,7 +215,7 @@ def check_preamble(lines: list[str]) -> list[tuple[str, str]]:
 
 
 def check_headings(lines: list[str]) -> list[tuple[str, str]]:
-    found = [strip_glyph(l[3:]) for l in lines if l.startswith("## ")]
+    found = [strip_glyph(l[3:]) for l in visible(lines) if l.startswith("## ")]
     if found != EXPECTED_HEADINGS:
         return [("headings", f"expected {EXPECTED_HEADINGS}, found {found}")]
     return []
@@ -194,7 +223,7 @@ def check_headings(lines: list[str]) -> list[tuple[str, str]]:
 
 def check_header(lines: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
     errors = []
-    heading_idx = next((i for i, l in enumerate(lines) if l.startswith("## ")), len(lines))
+    heading_idx = next((i for i, l in enumerate(visible(lines)) if l.startswith("## ")), len(lines))
     header_lines = lines[:heading_idx]
     header_text = "\n".join(header_lines)
     for prefix in ("Reviewer:", "Self-identified:", "Target:", "Scope:", "Method:"):
@@ -281,7 +310,7 @@ def check_findings(section_lines: list[str]) -> tuple[list[tuple[str, str]], lis
 
 
 def check_counts(lines: list[str], findings: list[tuple[int, str, str]]) -> list[tuple[str, str]]:
-    counts_line = next((l for l in lines if l.strip().startswith("- Counts:")), None)
+    counts_line = next((l for l in visible(lines) if l.strip().startswith("- Counts:")), None)
     if counts_line is None:
         return [("counts", "missing '- Counts:' line")]
     errors = []
@@ -316,13 +345,20 @@ def compute_verdict(findings: list[tuple[int, str, str]]) -> str:
     return "SHIP"
 
 
+VERDICT_WORDS_RE = re.compile(r"BLOCK|FIX FIRST|SHIP")
+
+
 def check_verdict(lines: list[str], findings: list[tuple[int, str, str]]) -> list[tuple[str, str]]:
-    verdict_line = next((l for l in lines if l.strip().startswith("- Verdict:")), None)
+    verdict_line = next((l for l in visible(lines) if l.strip().startswith("- Verdict:")), None)
     if verdict_line is None:
         return [("verdict", "missing '- Verdict:' line")]
     expected = compute_verdict(findings)
-    if expected not in verdict_line:
-        return [("verdict", f"Verdict line does not contain expected {expected!r}: {verdict_line.strip()!r}")]
+    stripped = verdict_line.strip()
+    head = stripped[len("- Verdict:"):].split(" — ", 1)[0]
+    m = VERDICT_WORDS_RE.search(head)
+    written = m.group(0) if m else None
+    if written != expected:
+        return [("verdict", f"Verdict line does not contain expected {expected!r}: {stripped!r}")]
     return []
 
 
@@ -407,7 +443,9 @@ def check_low_conf(lines: list[str], findings: list[tuple[int, str, str]]) -> li
     return warnings
 
 
-def run_checks(lines: list[str], expect: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+def run_checks(
+    lines: list[str], expect: str, dispatcher_method: str | None = None
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     errors: list[tuple[str, str]] = []
     warnings: list[tuple[str, str]] = []
 
@@ -432,7 +470,10 @@ def run_checks(lines: list[str], expect: str) -> tuple[list[tuple[str, str]], li
     stress_errors, data_rows = check_stress(lines)
     errors += stress_errors
     method_match = re.search(r"Method:\s*(\S+)", "\n".join(header_lines))
-    method_value = method_match.group(1) if method_match else None
+    doc_method = method_match.group(1) if method_match else None
+    if dispatcher_method is not None and doc_method != dispatcher_method:
+        errors.append(("method", f"header says {doc_method}, dispatcher set {dispatcher_method}"))
+    method_value = dispatcher_method if dispatcher_method is not None else doc_method
     errors += check_method(method_value, data_rows)
     warnings += check_low_conf(lines, findings)
 
@@ -452,7 +493,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         path.write_bytes(out.encode("utf-8"))
 
     lines = norm.split("\n")
-    errors, warnings = run_checks(lines, args.expect)
+    errors, warnings = run_checks(lines, args.expect, args.method)
     for rule, detail in errors:
         print(f"FAIL: {rule}: {detail}")
     for rule, detail in warnings:
@@ -490,6 +531,7 @@ def main() -> int:
     p_check.add_argument("file")
     p_check.add_argument("--expect", required=True)
     p_check.add_argument("--stamp", action="store_true")
+    p_check.add_argument("--method", choices=["STATIC", "TEST", "LIVE"], default=None)
     p_check.set_defaults(func=cmd_check)
 
     args = parser.parse_args()

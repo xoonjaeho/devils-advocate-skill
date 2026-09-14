@@ -273,3 +273,104 @@ def test_evidence_quote_on_next_line_passes(tmp_path):
     content = content.replace("\n- Impact:", "\n  ```\n- Impact:", 1)
     result = run_check(write_fixture(tmp_path, content))
     assert result.returncode == 0, result.stdout
+
+
+def test_fence_uses_more_backticks_when_content_has_triple_backtick(tmp_path):
+    # regression: content containing a ``` line must not break the 3-backtick fence
+    content = "line one\n```\nnested fence\n```\nline two\n"
+    target = tmp_path / "snippet.md"
+    target.write_text(content, encoding="utf-8")
+    out_path = tmp_path / "packet.md"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "build", str(target), "-o", str(out_path)],
+        capture_output=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    packet = out_path.read_text(encoding="utf-8")
+    assert "````md" in packet
+    assert "```\nnested fence\n```" in packet
+
+
+def test_build_empty_diff_fails(tmp_path):
+    # regression: an empty `git diff` must fail loudly instead of writing an empty target section
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run = lambda *cmd: subprocess.run(cmd, cwd=repo, capture_output=True, encoding="utf-8", check=True)
+    run("git", "init")
+    run("git", "config", "user.email", "test@example.com")
+    run("git", "config", "user.name", "Test")
+    (repo / "hello.txt").write_text("hello\n", encoding="utf-8")
+    run("git", "add", "hello.txt")
+    run("git", "commit", "-m", "init")
+    run("git", "commit", "--allow-empty", "-m", "empty")
+
+    out_path = repo / "packet.md"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "build", "HEAD", "-o", str(out_path)],
+        cwd=repo,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 1
+    assert "empty diff" in result.stderr
+    assert not out_path.exists()
+
+
+def test_headings_scan_ignores_fenced_content(tmp_path):
+    # regression: a fenced quote inside F1's Evidence containing a column-0 "## Findings"
+    # line must not be counted as a real heading by check_headings
+    content = BASE_FIXTURE.replace(
+        '- Evidence: the `with open(out_path, "w", ...)` block has no error handling around `f.write(packet)`.\n',
+        '- Evidence: the `with open(out_path, "w", ...)` block has no error handling around `f.write(packet)`.\n'
+        "```\n## Findings\n```\n",
+        1,
+    )
+    result = run_check(write_fixture(tmp_path, content))
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_build_target_with_backslash_and_focus_regex_metachar(tmp_path):
+    # regression: target/focus are user text used as re.sub *replacements*; a Windows
+    # path (backslash escapes) or a focus string containing "\1" must pass through verbatim
+    target = tmp_path / "file.txt"
+    target.write_text("hello\n", encoding="utf-8")
+    out_path = tmp_path / "packet.md"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "build", str(target), "-o", str(out_path), "--focus", r"a\1b"],
+        capture_output=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    packet = out_path.read_text(encoding="utf-8")
+    assert f"Target: {target}" in packet
+    assert r"Focus: a\1b" in packet
+
+
+def test_verdict_only_matches_word_before_dash(tmp_path):
+    # regression: "SHIP" appearing only in the trailing prose (after the em-dash) must not
+    # satisfy an expected verdict of SHIP when the written word before the dash is FIX FIRST
+    content = BASE_FIXTURE.replace(
+        "### F1 · 🟠 Major · confidence High · build does not flush output on error path",
+        "### F1 · 🟠 Minor · confidence High · build does not flush output on error path",
+    )
+    content = content.replace(
+        "- Verdict: 🔧 FIX FIRST — F1 is a Major finding with High confidence.",
+        "- Verdict: 🔧 FIX FIRST — SHIP 가능해 보이지만 F1 검토가 필요합니다.",
+    )
+    path = write_fixture(tmp_path, content)
+    result = run_check(path)
+    assert result.returncode == 1
+    assert "FAIL: verdict" in result.stdout
+
+
+def test_method_flag_overrides_and_checks_header(tmp_path):
+    # regression: --method must be checked against the document's Method: header
+    content = BASE_FIXTURE.replace(
+        "Method: STATIC   Kind: script   Lang: en", "Method: TEST   Kind: script   Lang: en"
+    )
+    path = write_fixture(tmp_path, content)
+    cmd = [sys.executable, str(SCRIPT), "check", str(path), "--expect", EXPECT, "--method", "STATIC"]
+    result = subprocess.run(cmd, capture_output=True, encoding="utf-8")
+    assert result.returncode == 1
+    assert "FAIL: method" in result.stdout

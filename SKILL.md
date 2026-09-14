@@ -41,8 +41,10 @@ A timeout, crash, or empty output file is reported as such and ends the run. Do 
 ## 4. Check
 
 ```bash
-PYTHONUTF8=1 python "$SKILL/scripts/advocate.py" check "$S/tmp_da_out.md" --expect <expect value> --stamp
+PYTHONUTF8=1 python "$SKILL/scripts/advocate.py" check "$S/tmp_da_out.md" --expect <expect value> --method M --stamp
 ```
+
+`--method` is the value you passed to build; the document's own `Method:` line is not trusted.
 
 - Exit 0 → §5. `WARN: reviewer` (Self-identified ≠ Reviewer) is kept in the report line, never treated as failure — models misreport their own id.
 - Exit 1 → retry **once** with the same engine: append to the packet
@@ -56,7 +58,7 @@ PYTHONUTF8=1 python "$SKILL/scripts/advocate.py" check "$S/tmp_da_out.md" --expe
 
 ## 5. Verify specific claims
 
-For every `### F<n>` heading, read the real file at its `Where:` `path:line` (relative to the repo). The claim holds when the Evidence quote, or the code it describes, is at that line (±5 lines). Otherwise append ` ⚠ unverified` to that F heading — never delete it. Then recompute the verdict from the verified F headings only (BLOCK: Blocker with confidence ≥ Medium · FIX FIRST: Major with confidence ≥ Medium, or only Low-confidence Blocker/Major · SHIP: neither) and, if it changed, rewrite the `- Verdict:` line as `<new> (was <old>; n finding(s) unverified)`.
+For every `### F<n>` heading, read the file at its `Where:` `path:line` **as of the reviewed revision** — `git show <rev>:<path>` for a rev/range target (the right-hand rev), the working tree for a path target — never the current tree when the target is historical. The claim holds when the Evidence quote, or the code it describes, is at that line (±5 lines). Otherwise append ` ⚠ unverified` to that F heading — never delete it. Then recompute the verdict from the verified F headings only (BLOCK: Blocker with confidence ≥ Medium · FIX FIRST: Major with confidence ≥ Medium, or only Low-confidence Blocker/Major · SHIP: neither) and, if it changed, rewrite the `- Verdict:` line as `<new> (was <old>; n finding(s) unverified)`.
 
 ## 6. Report
 
