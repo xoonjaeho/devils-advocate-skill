@@ -11,7 +11,7 @@ The orchestrator (you) never writes the review. You build the packet, dispatch o
 
 `/devils-advocate [target] [--engine E] [--focus TEXT] [--kind K] [--lang L] [--method M] [--model NAME]`
 
-- `target` — a git rev (`HEAD`, `abc123`), a range (`main..HEAD`), or a path. Absent → the working tree: `git diff HEAD > $S/tmp_target.diff` and use that file (empty diff → fall back to `HEAD`).
+- `target` — a git rev (`HEAD`, `abc123`), a range (`main..HEAD`), or a path. Absent → the working tree: `git diff HEAD > $S/tmp_target.diff` and use that file (empty diff → fall back to `HEAD`). Untracked files are not in that diff — say so in the report, or pass their path as the target.
 - `--engine` — `claude` (default) · `codex` · `ollama`. Never switch engines silently; if the chosen one is unavailable, say so and stop.
 - `--kind` default `script`; `--lang` default `ko`; `--focus` default none; `--method` default `STATIC` (`TEST` only for claude/codex when the repo has a runnable test suite — ollama is always STATIC).
 - `$S` = the session scratchpad. `$SKILL` = this skill's directory (`~/.claude/skills/devils-advocate`). Every command below runs with `PYTHONUTF8=1`.
@@ -20,7 +20,9 @@ The orchestrator (you) never writes the review. You build the packet, dispatch o
 |---|---|---|
 | claude | `claude-opus-5` | `Agent(subagent_type:"general-purpose", model:"opus")` |
 | codex | `gpt-6-astra` | `node "$CODEX" task --effort high` |
-| ollama | `glm-5.3:cloud` (or `--model`) | `python "$OLLAMA" run --think` |
+| ollama | `kimi-k3:cloud` (or `--model`) | `python "$OLLAMA" run --think` |
+
+ollama default is kimi-k3:cloud, not glm-5.3:cloud: on a ~50 KB packet glm spends its whole output budget reasoning and never emits the document (0/3 in the dry run); kimi returns it in ~8 min.
 
 ## 2. Build
 

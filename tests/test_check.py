@@ -374,3 +374,13 @@ def test_method_flag_overrides_and_checks_header(tmp_path):
     result = subprocess.run(cmd, capture_output=True, encoding="utf-8")
     assert result.returncode == 1
     assert "FAIL: method" in result.stdout
+
+
+def test_html_entity_inside_inline_code_is_quoted_evidence(tmp_path):
+    # regression: `&lt;` quoted in backticks is evidence, not a rendering bug (kimi dry-run FAIL)
+    content = BASE_FIXTURE.replace(
+        "Impact: a caller could see a truncated packet file and mistake it for a complete one.",
+        "Impact: a caller could see a `&lt;truncated&gt;` packet file and mistake it for a complete one.",
+    )
+    result = run_check(write_fixture(tmp_path, content))
+    assert result.returncode == 0, result.stdout

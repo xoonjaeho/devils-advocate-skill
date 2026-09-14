@@ -36,7 +36,7 @@ target (diff / path / range)
         └─ ONE engine, fresh session, output to a file
              claude : Agent(model: opus)            → claude-opus-5
              codex  : codex-companion task < packet → gpt-6-astra
-             ollama : ollama_companion run < packet → glm-5.3:cloud   (STATIC only)
+             ollama : ollama_companion run < packet → kimi-k3:cloud    (STATIC only)
               └─ scripts/advocate.py check --expect <engine> --method M --stamp
                    fail → same engine once more with the FAIL lines appended → else raw output + errors
                    pass → session verifies every F# Where/Evidence at the reviewed revision

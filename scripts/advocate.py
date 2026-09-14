@@ -272,8 +272,13 @@ def check_placeholder(lines: list[str]) -> list[tuple[str, str]]:
     return errors
 
 
-def check_entity(full_text: str) -> list[tuple[str, str]]:
-    return [("entity", f"HTML entity found: {m.group(0)!r}") for m in ENTITY_RE.finditer(full_text)]
+def check_entity(lines: list[str]) -> list[tuple[str, str]]:
+    """Entities in prose are a rendering bug; inside fences or inline code they are quoted evidence."""
+    errors = []
+    for line in visible(lines):
+        for m in ENTITY_RE.finditer(INLINE_CODE_RE.sub("", line)):
+            errors.append(("entity", f"HTML entity found: {m.group(0)!r}"))
+    return errors
 
 
 def check_findings(section_lines: list[str]) -> tuple[list[tuple[str, str]], list[tuple[int, str, str]]]:
@@ -457,7 +462,7 @@ def run_checks(
     errors += rev_errors
     warnings += rev_warnings
     errors += check_placeholder(lines)
-    errors += check_entity("\n".join(lines))
+    errors += check_entity(lines)
 
     findings_errors, findings = check_findings(extract_section(lines, "Findings"))
     errors += findings_errors
