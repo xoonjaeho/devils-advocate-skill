@@ -270,6 +270,10 @@ def check_findings(section_lines: list[str]) -> tuple[list[tuple[str, str]], lis
                 continue
             value = bl.strip()[len(f"- {label}"):].strip()
             if label == "Evidence:" and not value:
+                # a quote may start on the next line (fenced or indented continuation)
+                j = block.index(bl) + 1
+                value = "".join(l for l in block[j:j + 2] if l.startswith((" ", "	", "```"))).strip()
+            if label == "Evidence:" and not value:
                 errors.append(("finding", f"F{num} Evidence bullet is empty"))
             if label == "Where:" and not WHERE_LOC_RE.search(bl):
                 errors.append(("finding", f"F{num} Where bullet missing a `path:line` token"))

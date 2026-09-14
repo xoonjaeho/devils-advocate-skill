@@ -265,3 +265,11 @@ def test_build_rejects_oversized_packet(tmp_path):
     )
     assert result.returncode == 1
     assert not out_path.exists()
+
+
+def test_evidence_quote_on_next_line_passes(tmp_path):
+    # regression: a fenced quote starting on the line after "- Evidence:" is evidence, not empty
+    content = BASE_FIXTURE.replace("- Evidence: ", "- Evidence:\n  ```\n  ", 1)
+    content = content.replace("\n- Impact:", "\n  ```\n- Impact:", 1)
+    result = run_check(write_fixture(tmp_path, content))
+    assert result.returncode == 0, result.stdout
