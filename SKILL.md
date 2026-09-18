@@ -1,6 +1,6 @@
 ---
 name: devils-advocate
-description: Adversarial second opinion on a diff, commit range or path — a separate engine (claude / codex / ollama) tries to break the change and writes a fixed-format Devil's Advocate Review; a checker validates the form, the orchestrator verifies every file:line against the real file, and the review is reported verbatim. Invoke with `/devils-advocate [target] [--engine claude|codex|ollama] [--focus <text>] [--kind service|cli|script|doc] [--lang ko|en]`.
+description: Adversarial second opinion on a diff, commit range or path — a separate engine (claude / codex / ollama) tries to break the change; its fixed-format review is verified against the real files and reported verbatim. Invoke with `/devils-advocate [target] [--engine claude|codex|ollama] [--focus <text>] [--kind …] [--lang ko|en]`.
 ---
 
 # /devils-advocate — adversarial review by a separate engine
