@@ -34,7 +34,7 @@ The verdict is recomputed by the checker from the findings — the engine cannot
 target (diff / path / range)
    └─ scripts/advocate.py build   → packet.md  (packet.md + fenced target + TEMPLATE.md, header pre-filled)
         └─ ONE engine, fresh session, output to a file
-             claude : Agent(model: opus)            → claude-opus-5
+             claude : Agent(model: opus)            → claude-opus-5-5
              codex  : codex-companion task < packet → gpt-6-astra
              ollama : ollama_companion run < packet → kimi-k3:cloud    (STATIC only)
               └─ scripts/advocate.py check --expect <engine> --method M --stamp

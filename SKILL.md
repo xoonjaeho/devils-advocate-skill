@@ -18,7 +18,7 @@ The orchestrator (you) never writes the review. You build the packet, dispatch o
 
 | engine | `--expect` value (Reviewer stamp) | runs as |
 |---|---|---|
-| claude | `claude-opus-5` | `Agent(subagent_type:"general-purpose", model:"opus")` |
+| claude | `claude-opus-5-5` | `Agent(subagent_type:"general-purpose", model:"opus")` |
 | codex | `gpt-6-astra` | `node "$CODEX" task --effort high` |
 | ollama | `kimi-k3:cloud` (or `--model`) | `python "$OLLAMA" run --think` |
 
