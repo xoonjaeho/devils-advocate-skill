@@ -511,6 +511,32 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# codex-model
+# ---------------------------------------------------------------------------
+
+
+def cmd_codex_model(args: argparse.Namespace) -> int:
+    """Print the top-level model from Codex's config."""
+    codex_home = os.environ.get("CODEX_HOME")
+    path = (Path(codex_home) if codex_home else Path.home() / ".codex") / "config.toml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        print(f"config file missing: {path}", file=sys.stderr)
+        return 2
+
+    for line in text.splitlines():
+        if line.strip().startswith("["):
+            break
+        match = re.match(r'^\s*model\s*=\s*"([^"]+)"', line)
+        if match:
+            print(match.group(1))
+            return 0
+    print(f"no top-level model key in {path}", file=sys.stderr)
+    return 2
+
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
@@ -538,6 +564,9 @@ def main() -> int:
     p_check.add_argument("--stamp", action="store_true")
     p_check.add_argument("--method", choices=["STATIC", "TEST", "LIVE"], default=None)
     p_check.set_defaults(func=cmd_check)
+
+    p_codex_model = sub.add_parser("codex-model")
+    p_codex_model.set_defaults(func=cmd_codex_model)
 
     args = parser.parse_args()
     return args.func(args)
