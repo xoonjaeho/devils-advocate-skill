@@ -6,7 +6,7 @@ A Claude Code skill. A second engine (Claude, Codex, or an ollama cloud model) t
 
 ```
 /devils-advocate                       # working tree vs HEAD, engine claude (opus)
-/devils-advocate HEAD --engine codex   # last commit, reviewed by gpt-6-sol
+/devils-advocate HEAD --engine codex   # last commit, reviewed by gpt-6.1-sol
 /devils-advocate main..HEAD --engine ollama --kind service --focus "rollback"
 /devils-advocate src/api/ --lang en
 ```
@@ -35,7 +35,7 @@ target (diff / path / range)
    └─ scripts/advocate.py build   → packet.md  (packet.md + fenced target + TEMPLATE.md, header pre-filled)
         └─ ONE engine, fresh session, output to a file
              claude : Agent(model: opus)            → claude-opus-5-5
-             codex  : codex-companion task < packet → gpt-6-sol
+             codex  : codex-companion task < packet → gpt-6.1-sol
              ollama : ollama_companion run < packet → kimi-k3:cloud    (STATIC only)
               └─ scripts/advocate.py check --expect <engine> --method M --stamp
                    fail → same engine once more with the FAIL lines appended → else raw output + errors

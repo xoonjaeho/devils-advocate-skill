@@ -119,7 +119,7 @@ def test_counts_mismatch_fails(tmp_path):
 
 
 def test_reviewer_mismatch_fails(tmp_path):
-    content = BASE_FIXTURE.replace("Reviewer: claude-opus-5\n", "Reviewer: gpt-6-sol\n")
+    content = BASE_FIXTURE.replace("Reviewer: claude-opus-5\n", "Reviewer: gpt-6.1-sol\n")
     path = write_fixture(tmp_path, content)
     result = run_check(path)
     assert result.returncode == 1
@@ -208,7 +208,7 @@ def test_preamble_fails(tmp_path):
 
 
 def test_self_identified_mismatch_only_warns(tmp_path):
-    content = BASE_FIXTURE.replace("Self-identified: claude-opus-5", "Self-identified: gpt-6-sol")
+    content = BASE_FIXTURE.replace("Self-identified: claude-opus-5", "Self-identified: gpt-6.1-sol")
     path = write_fixture(tmp_path, content)
     result = run_check(path)
     assert result.returncode == 0, result.stdout + result.stderr

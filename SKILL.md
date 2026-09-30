@@ -19,7 +19,7 @@ The orchestrator (you) never writes the review. You build the packet, dispatch o
 | engine | `--expect` value (Reviewer stamp) | runs as |
 |---|---|---|
 | claude | `claude-opus-5-5` | `Agent(subagent_type:"general-purpose", model:"opus")` |
-| codex | `gpt-6-sol` | `node "$CODEX" task --effort high` |
+| codex | `gpt-6.1-sol` | `node "$CODEX" task --effort high` |
 | ollama | `kimi-k3:cloud` (or `--model`) | `python "$OLLAMA" run --think` |
 
 ollama default is kimi-k3:cloud, not glm-5.3:cloud: on a ~50 KB packet glm spends its whole output budget reasoning and never emits the document (0/3 in the dry run); kimi returns it in ~8 min.
