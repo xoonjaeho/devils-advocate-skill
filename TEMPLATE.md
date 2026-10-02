@@ -1,10 +1,10 @@
 # 😈 Devil's Advocate Review — <target one-liner>
 
-Reviewer: <stamped by SKILL.md from the dispatch path — claude-opus-5-5 / codex's configured model / kimi-k3:cloud>
+Reviewer: <stamped by SKILL.md from the dispatch path — claude-opus-5-5 / codex's configured model>
 Self-identified: <the model id you believe you are — written by the engine, never checked, mismatch = warning>
 Target: <commit range | path | PR>   Base: <sha>   Date: <YYYY-MM-DD HH:mm>
 Scope: <files reviewed / files skipped and why>   Focus: <--focus or "none">
-Method: STATIC | TEST | LIVE   <stamped by build; ollama ask = STATIC, so no TEST/LIVE rows>   Kind: service | cli | script | doc   Lang: ko | en   <body language; labels stay English>
+Method: STATIC | TEST | LIVE   <stamped by build>   Kind: service | cli | script | doc   Lang: ko | en   <body language; labels stay English>
 
 ## 📋 Overview
 - What it does: <2–3 lines in the reviewer's own words — proves the reviewer read it>
@@ -25,7 +25,7 @@ Method: STATIC | TEST | LIVE   <stamped by build; ollama ask = STATIC, so no TES
 
 ## 🔍 Findings
 ### F1 · 🔴 Blocker · confidence High · <title>
-- Where: `<file>:<line>`   <ollama ask: must lie inside the fenced diff>
+- Where: `<file>:<line>`
 - Claim: <what is wrong, one sentence>
 - Evidence: <verbatim quote ≤5 lines, repro command + output, or a citation — never "looks wrong">
 - Impact: <what a user/operator sees when it fails>

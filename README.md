@@ -1,17 +1,17 @@
 # 😈 /devils-advocate — adversarial review by a separate engine
 
-A Claude Code skill. A second engine (Claude, Codex, or an ollama cloud model) tries to break a change and writes a fixed-format **Devil's Advocate Review**; a stdlib checker validates the form, the orchestrating session verifies every `file:line` against the real file, and the review is reported verbatim — never summarised, never written by the session that made the change.
+A Claude Code skill. A second engine (Claude or Codex) tries to break a change and writes a fixed-format **Devil's Advocate Review**; a stdlib checker validates the form, the orchestrating session verifies every `file:line` against the real file, and the review is reported verbatim — never summarised, never written by the session that made the change.
 
 ## Quick start
 
 ```
 /devils-advocate                       # working tree vs HEAD, engine claude (opus)
 /devils-advocate HEAD --engine codex   # last commit, reviewed by codex's configured default model
-/devils-advocate main..HEAD --engine ollama --kind service --focus "rollback"
+/devils-advocate main..HEAD --engine codex --kind service --focus "rollback"
 /devils-advocate src/api/ --lang en
 ```
 
-Args: `[target] [--engine claude|codex|ollama] [--focus TEXT] [--kind service|cli|script|doc] [--lang ko|en] [--method STATIC|TEST|LIVE] [--model NAME]`. Defaults: working tree · claude · kind `script` · lang `ko` · method `STATIC`.
+Args: `[target] [--engine claude|codex] [--focus TEXT] [--kind service|cli|script|doc] [--lang ko|en] [--method STATIC|TEST|LIVE]`. Defaults: working tree · claude · kind `script` · lang `ko` · method `STATIC`.
 
 ## What you get
 
@@ -36,7 +36,6 @@ target (diff / path / range)
         └─ ONE engine, fresh session, output to a file
              claude : Agent(model: opus)            → claude-opus-5-5
              codex  : codex-companion task < packet → codex's default model (advocate.py codex-model)
-             ollama : ollama_companion run < packet → kimi-k3:cloud    (STATIC only)
               └─ scripts/advocate.py check --expect <engine> --method M --stamp
                    fail → same engine once more with the FAIL lines appended → else raw output + errors
                    pass → session verifies every F# Where/Evidence at the reviewed revision
@@ -56,7 +55,7 @@ tests/test_check.py   one failing fixture per checker rule + one passing fixture
 
 ## Install
 
-Copy the directory to `~/.claude/skills/devils-advocate/` (the same way as the other skills in this repository). Requires Python 3.10+. Engines are optional: `codex` needs the openai-codex plugin, `ollama` the ollama-cc plugin with a signed-in cloud model.
+Copy the directory to `~/.claude/skills/devils-advocate/` (the same way as the other skills in this repository). Requires Python 3.10+. Engines are optional: `codex` needs the openai-codex plugin.
 
 ## Tests
 

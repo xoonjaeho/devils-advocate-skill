@@ -54,7 +54,7 @@ Method: STATIC   Kind: script   Lang: en
 - Proposed: write to `OUT.tmp` then `os.replace(OUT.tmp, OUT)`.
 - Better on: correctness — a crash mid-write can no longer leave a truncated packet at OUT.
 - Costs: one extra rename syscall; negligible.
-- Evidence: this is the standard atomic-write pattern used elsewhere in the repo's ollama plugin.
+- Evidence: this is the standard atomic-write pattern used elsewhere in the repo's helper scripts.
 
 ## ❓ Questions to the author
 - Q1 (re F1): is a truncated packet file ever consumed automatically downstream, or always inspected by a human first? — a human-only consumer would lower F1 to Minor.
@@ -64,7 +64,7 @@ Method: STATIC   Kind: script   Lang: en
 - Counts and Verdict are recomputed from the F# headings rather than trusted from the document, closing the main tamper path.
 
 ## ⚠️ Not verified
-- LIVE behavior against a real ollama-authored review was not exercised; only STATIC reads of the script.
+- LIVE behavior against a real engine-authored review was not exercised; only STATIC reads of the script.
 """
 
 
@@ -377,7 +377,7 @@ def test_method_flag_overrides_and_checks_header(tmp_path):
 
 
 def test_html_entity_inside_inline_code_is_quoted_evidence(tmp_path):
-    # regression: `&lt;` quoted in backticks is evidence, not a rendering bug (kimi dry-run FAIL)
+    # regression: `&lt;` quoted in backticks is evidence, not a rendering bug
     content = BASE_FIXTURE.replace(
         "Impact: a caller could see a truncated packet file and mistake it for a complete one.",
         "Impact: a caller could see a `&lt;truncated&gt;` packet file and mistake it for a complete one.",
