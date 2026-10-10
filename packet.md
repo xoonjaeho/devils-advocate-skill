@@ -35,7 +35,7 @@ Every row's Result is one of `💥 broke → F#`, `🛡️ held`, `➖ n/a: <rea
 - Severity is how deep the attack went, not how loud it sounds. **Blocker**: the design breaks — corruption, data loss, auth bypass, no rollback — and it reproduces. **Major**: breaks under a specific condition, or the alternative is measurably better; fix before merge. **Minor**: clear improvement, the current design survives. **Nit**: taste; the author may ignore it.
 - Confidence is separate: **High** = reproduced or read end-to-end; **Medium** = read, one link inferred; **Low** = suspicion. A Low-confidence Blocker or Major also goes in Not verified, with a Q#.
 - Evidence is a verbatim quote (≤5 lines), a command with its output, or a citation. "Looks wrong" is not evidence. `Where` is `file:line`; when the diff below is all you were given, it must lie inside that diff.
-- Verdict and Counts are recomputed by a checker from your F# headings; write them consistently or the review is rejected. BLOCK = a Blocker with confidence ≥ Medium · FIX FIRST = a Major with confidence ≥ Medium, or only Low-confidence Blocker / Major · SHIP = neither, and ≥3 non-n/a stress rows.
+- Verdict and Counts must agree with your F# headings. BLOCK = a Blocker with confidence ≥ Medium · FIX FIRST = a Major with confidence ≥ Medium, or only Low-confidence Blocker / Major · SHIP = neither, and ≥3 non-n/a stress rows.
 
 ## Better alternatives (≥1)
 
