@@ -26,7 +26,7 @@ One document, headings fixed in English, body in `--lang`:
 | Questions to the author | each says which answer would change the verdict |
 | Held up · Not verified | what was done well · the boundary of what was checked |
 
-The verdict is recomputed by the checker from the findings — the engine cannot declare `SHIP` over an unaddressed Blocker. `Reviewer:` is stamped by the dispatch path; `Self-identified:` is the model's own claim and only ever a warning.
+The verdict is recomputed by the checker from the findings (rule: `compute_verdict` in `scripts/advocate.py`) — the engine cannot declare `SHIP` over an unaddressed Blocker. `Reviewer:` is stamped by the dispatch path; `Self-identified:` is the model's own claim and only ever a warning.
 
 ## How it works
 

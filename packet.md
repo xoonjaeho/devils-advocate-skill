@@ -34,6 +34,8 @@ Every row's Result is one of `💥 broke → F#`, `🛡️ held`, `➖ n/a: <rea
 
 - Severity is how deep the attack went, not how loud it sounds. **Blocker**: the design breaks — corruption, data loss, auth bypass, no rollback — and it reproduces. **Major**: breaks under a specific condition, or the alternative is measurably better; fix before merge. **Minor**: clear improvement, the current design survives. **Nit**: taste; the author may ignore it.
 - Confidence is separate: **High** = reproduced or read end-to-end; **Medium** = read, one link inferred; **Low** = suspicion. A Low-confidence Blocker or Major also goes in Not verified, with a Q#.
+- At most 3 Nit findings per review; fold any extra Nits into one.
+- When the same defect pattern recurs, write one line `rg: <regex>` in Fix instead of listing each line, and never claim it was run.
 - Evidence is a verbatim quote (≤5 lines), a command with its output, or a citation. "Looks wrong" is not evidence. `Where` is `file:line`; when the diff below is all you were given, it must lie inside that diff.
 - Verdict and Counts must agree with your F# headings. BLOCK = a Blocker with confidence ≥ Medium · FIX FIRST = a Major with confidence ≥ Medium, or only Low-confidence Blocker / Major · SHIP = neither, and ≥3 non-n/a stress rows.
 

@@ -11,7 +11,7 @@ The orchestrator (you) never writes the review. You build the packet, dispatch o
 
 `/devils-advocate [target] [--engine E] [--focus TEXT] [--kind K] [--lang L] [--method M]`
 
-- `target` — a git rev (`HEAD`, `abc123`), a range (`main..HEAD`), or a path. Absent → the working tree: `git diff HEAD > $S/tmp_target.diff` and use that file (empty diff → fall back to `HEAD`). Untracked files are not in that diff — say so in the report, or pass their path as the target.
+- `target` — a git rev (`HEAD`, `abc123`), a range (`main..HEAD`), or a path. Absent → the working tree: `build` runs `git diff HEAD` itself (lockfiles excluded; empty diff → falls back to `HEAD`). Untracked files are not in that diff — say so in the report, or pass their path as the target. A directory target skips `.gitignore`d files and lockfiles; the packet's Target section lists what was skipped. To review a lockfile, pass its path.
 - `--engine` — `claude` (default) · `codex`. Never switch engines silently; if the chosen one is unavailable, say so and stop.
 - `--kind` default `script`; `--lang` default `ko`; `--focus` default none; `--method` default `STATIC` (`TEST` only when the repo has a runnable test suite).
 - `$S` = the session scratchpad. `$SKILL` = this skill's directory (`~/.claude/skills/devils-advocate`). Every command below runs with `PYTHONUTF8=1`.
@@ -24,10 +24,10 @@ The orchestrator (you) never writes the review. You build the packet, dispatch o
 ## 2. Build
 
 ```bash
-cd <repo> && PYTHONUTF8=1 python "$SKILL/scripts/advocate.py" build <target> -o "$S/tmp_da_packet.md" --kind K --lang L --method M [--focus TEXT]
+cd <repo> && PYTHONUTF8=1 python "$SKILL/scripts/advocate.py" build [target] -o "$S/tmp_da_packet.md" --kind K --lang L --method M [--focus TEXT]
 ```
 
-Exit 1 = packet too large or git error; print the stderr line and stop. Emit `tmp: $S/tmp_da_packet.md` on creation.
+Omit `target` for the working tree. Exit 1 = packet too large, git error, or everything was excluded (re-run with the file path); print the stderr line and stop. Emit `tmp: $S/tmp_da_packet.md` on creation.
 
 ## 3. Dispatch — one engine, output to a file, foreground
 
@@ -56,7 +56,7 @@ PYTHONUTF8=1 python "$SKILL/scripts/advocate.py" check "$S/tmp_da_out.md" --expe
 
 ## 5. Verify specific claims
 
-For every `### F<n>` heading, read the file at its `Where:` `path:line` **as of the reviewed revision** — `git show <rev>:<path>` for a rev/range target (the right-hand rev), the working tree for a path target — never the current tree when the target is historical. The claim holds when the Evidence quote, or the code it describes, is at that line (±5 lines). Otherwise append ` ⚠ unverified` to that F heading — never delete it. Then recompute the verdict from the verified F headings only (BLOCK: Blocker with confidence ≥ Medium · FIX FIRST: Major with confidence ≥ Medium, or only Low-confidence Blocker/Major · SHIP: neither) and, if it changed, rewrite the `- Verdict:` line as `<new> (was <old>; n finding(s) unverified)`.
+For every `### F<n>` heading, read the file at its `Where:` `path:line` **as of the reviewed revision** — `git show <rev>:<path>` for a rev/range target (the right-hand rev), the working tree for a path or no-target run — never the current tree when the target is historical. The claim holds when the Evidence quote, or the code it describes, is at that line (±5 lines). Otherwise append ` ⚠ unverified` to that F heading — never delete it. If a Fix has an `rg: <regex>` line, run it at the reviewed revision (`git grep -nE <regex> <rev>` for a rev/range target, `rg -n <regex>` on the working tree for a path or no-target run) and append ` (rg: <n> hits)` to that F heading. Then recompute the verdict from the verified F headings only, by the rule in `compute_verdict` (`scripts/advocate.py`), and, if it changed, rewrite the `- Verdict:` line as `<new> (was <old>; n finding(s) unverified)`.
 
 ## 6. Report
 

@@ -384,3 +384,158 @@ def test_html_entity_inside_inline_code_is_quoted_evidence(tmp_path):
     )
     result = run_check(write_fixture(tmp_path, content))
     assert result.returncode == 0, result.stdout
+
+
+def _with_nits(n: int) -> str:
+    """BASE_FIXTURE with n Nit findings (F2..F{n+1}) and a matching Counts line."""
+    block = BASE_FIXTURE[BASE_FIXTURE.index("### F2"):BASE_FIXTURE.index("## 💡")]
+    extra = "".join(block.replace("### F2", f"### F{i}") for i in range(3, n + 2))
+    content = BASE_FIXTURE.replace("\n## 💡", "\n" + extra.rstrip("\n") + "\n\n## 💡", 1) if n > 1 else BASE_FIXTURE
+    return content.replace("🟢 Nit 1", f"🟢 Nit {n}", 1)
+
+
+def test_four_nits_warn_but_exit_zero(tmp_path):
+    # regression: the Nit cap is a warning on parsed F headings, never a failure
+    result = run_check(write_fixture(tmp_path, _with_nits(4)))
+    assert result.returncode == 0, result.stdout
+    assert "WARN: nit-cap" in result.stdout
+
+
+def test_three_nits_no_warning(tmp_path):
+    result = run_check(write_fixture(tmp_path, _with_nits(3)))
+    assert result.returncode == 0, result.stdout
+    assert "nit-cap" not in result.stdout
+
+
+def test_nit_cap_counts_headings_not_counts_line(tmp_path):
+    # the Counts line lies (says 1) but 4 Nit headings exist: counts check fails, cap still warns
+    content = _with_nits(4).replace("🟢 Nit 4", "🟢 Nit 1", 1)
+    result = run_check(write_fixture(tmp_path, content))
+    assert "WARN: nit-cap" in result.stdout
+
+
+def _git_repo(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run = lambda *cmd: subprocess.run(cmd, cwd=repo, capture_output=True, encoding="utf-8", check=True)
+    run("git", "init")
+    run("git", "config", "user.email", "test@example.com")
+    run("git", "config", "user.name", "Test")
+    return repo, run
+
+
+def _build(repo: Path, *target: str):
+    out = repo.parent / "packet.md"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "build", *target, "-o", str(out)],
+        cwd=repo,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    return result, out
+
+
+def test_dir_target_skips_gitignored_and_lockfiles(tmp_path):
+    repo, run = _git_repo(tmp_path)
+    (repo / ".gitignore").write_text("build/\n", encoding="utf-8")
+    (repo / "build").mkdir()
+    (repo / "build" / "junk.txt").write_text("IGNORED_MARKER\n", encoding="utf-8")
+    (repo / "package-lock.json").write_text('{"LOCK_MARKER": 1}\n', encoding="utf-8")
+    (repo / "app.py").write_text("KEPT_MARKER = 1\n", encoding="utf-8")
+    run("git", "add", ".gitignore", "package-lock.json", "app.py")
+    run("git", "commit", "-m", "init")
+    (repo / "new_untracked.py").write_text("UNTRACKED_MARKER = 1\n", encoding="utf-8")
+
+    result, out = _build(repo, ".")
+    assert result.returncode == 0, result.stderr
+    packet = out.read_text(encoding="utf-8")
+    assert "KEPT_MARKER" in packet and "UNTRACKED_MARKER" in packet
+    assert "IGNORED_MARKER" not in packet and "LOCK_MARKER" not in packet
+    assert "- lockfile: package-lock.json" in packet
+    assert "- .gitignore: 1 file(s)" in packet
+
+
+def test_explicit_lockfile_target_is_kept(tmp_path):
+    repo, run = _git_repo(tmp_path)
+    (repo / "yarn.lock").write_text("LOCK_MARKER\n", encoding="utf-8")
+    result, out = _build(repo, "yarn.lock")
+    assert result.returncode == 0, result.stderr
+    assert "LOCK_MARKER" in out.read_text(encoding="utf-8")
+
+
+def test_dir_with_only_excluded_files_exits_one(tmp_path):
+    repo, run = _git_repo(tmp_path)
+    (repo / "go.sum").write_text("x\n", encoding="utf-8")
+    result, out = _build(repo, ".")
+    assert result.returncode == 1
+    assert "pass the file explicitly" in result.stderr
+    assert not out.exists()
+
+
+def test_rev_diff_touching_only_lockfile_exits_one(tmp_path):
+    repo, run = _git_repo(tmp_path)
+    (repo / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (repo / "Cargo.lock").write_text("v1\n", encoding="utf-8")
+    run("git", "add", ".")
+    run("git", "commit", "-m", "init")
+    (repo / "Cargo.lock").write_text("v2\n", encoding="utf-8")
+    run("git", "commit", "-am", "bump lock")
+    result, out = _build(repo, "HEAD")
+    assert result.returncode == 1
+    assert "pass the file explicitly" in result.stderr
+    assert not out.exists()
+
+
+def test_rev_diff_drops_nested_lockfile_but_keeps_source(tmp_path):
+    repo, run = _git_repo(tmp_path)
+    (repo / "sub").mkdir()
+    (repo / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (repo / "sub" / "uv.lock").write_text("v1\n", encoding="utf-8")
+    run("git", "add", ".")
+    run("git", "commit", "-m", "init")
+    (repo / "app.py").write_text("a = 2\n", encoding="utf-8")
+    (repo / "sub" / "uv.lock").write_text("v2\n", encoding="utf-8")
+    run("git", "commit", "-am", "change both")
+    result, out = _build(repo, "HEAD")
+    assert result.returncode == 0, result.stderr
+    packet = out.read_text(encoding="utf-8")
+    assert "+a = 2" in packet and "+v2" not in packet
+    assert "- lockfile: sub/uv.lock" in packet
+
+
+def test_no_target_build_contains_working_tree_change(tmp_path):
+    repo, run = _git_repo(tmp_path)
+    (repo / "app.py").write_text("a = 1\n", encoding="utf-8")
+    run("git", "add", ".")
+    run("git", "commit", "-m", "init")
+    (repo / "app.py").write_text("WORKTREE_MARKER = 2\n", encoding="utf-8")
+    result, out = _build(repo)
+    assert result.returncode == 0, result.stderr
+    packet = out.read_text(encoding="utf-8")
+    assert "+WORKTREE_MARKER = 2" in packet
+    assert "Target: working tree " in packet
+
+
+def test_no_target_clean_tree_falls_back_to_head(tmp_path):
+    repo, run = _git_repo(tmp_path)
+    (repo / "app.py").write_text("a = 1\n", encoding="utf-8")
+    run("git", "add", ".")
+    run("git", "commit", "-m", "init")
+    (repo / "app.py").write_text("HEAD_MARKER = 2\n", encoding="utf-8")
+    run("git", "commit", "-am", "second")
+    result, out = _build(repo)
+    assert result.returncode == 0, result.stderr
+    assert "+HEAD_MARKER = 2" in out.read_text(encoding="utf-8")
+
+
+def test_no_target_lockfile_only_change_exits_one(tmp_path):
+    repo, run = _git_repo(tmp_path)
+    (repo / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (repo / "uv.lock").write_text("v1\n", encoding="utf-8")
+    run("git", "add", ".")
+    run("git", "commit", "-m", "init")
+    (repo / "uv.lock").write_text("v2\n", encoding="utf-8")
+    result, out = _build(repo)
+    assert result.returncode == 1
+    assert "touches only excluded files" in result.stderr
+    assert not out.exists()

@@ -11,6 +11,18 @@ from datetime import datetime
 from pathlib import Path
 
 SKIP_DIRS = {".git", "__pycache__", ".venv"}
+LOCKFILES = {
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "poetry.lock",
+    "uv.lock",
+    "Cargo.lock",
+    "Gemfile.lock",
+    "composer.lock",
+    "go.sum",
+}
+MAX_NITS = 3
 EXPECTED_HEADINGS = [
     "Overview",
     "Stress log",
@@ -71,29 +83,102 @@ def walk_files(root: Path):
             yield Path(dirpath) / name
 
 
+def git_lines(args: list[str], cwd: Path | None = None) -> list[str] | None:
+    """Stdout lines of a git command, or None when git is missing or the command fails."""
+    try:
+        proc = subprocess.run(
+            ["git", "-c", "core.quotepath=false", *args], capture_output=True, text=True, encoding="utf-8", cwd=cwd
+        )
+    except FileNotFoundError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return [l for l in proc.stdout.split("\n") if l]
+
+
+def list_dir_files(root: Path) -> tuple[list[Path], list[str]]:
+    """Files to review under `root` and the skip notes (reason: what) for the Target section."""
+    ls = ["ls-files", "-co", "--exclude-standard", "--", "."]
+    inside = git_lines(["rev-parse", "--is-inside-work-tree"], cwd=root)
+    listed = git_lines(ls, cwd=root) if inside else None
+    if listed is not None:
+        names = sorted(listed)
+        ignored = git_lines(["ls-files", "-o", "-i", "--exclude-standard", "--", "."], cwd=root) or []
+    else:
+        names = [p.relative_to(root).as_posix() for p in walk_files(root)]
+        ignored = []
+    files, notes = [], []
+    for name in names:
+        path = root / name
+        if not path.is_file():
+            continue
+        if path.name in LOCKFILES:
+            notes.append(f"lockfile: {name}")
+        else:
+            files.append(path)
+    if ignored:
+        notes.append(f".gitignore: {len(ignored)} file(s)")
+    return files, notes
+
+
 def build_target_section(target_path: Path) -> str:
     parts = []
+    notes: list[str] = []
     if target_path.is_dir():
-        for file_path in walk_files(target_path):
+        files, notes = list_dir_files(target_path)
+        if notes and not files:
+            sys.stderr.write(
+                f"everything under {target_path} was excluded ({'; '.join(notes)}); pass the file explicitly\n"
+            )
+            sys.exit(1)
+        for file_path in files:
             if is_binary(file_path):
                 continue
             rel = file_path.relative_to(target_path).as_posix()
             parts.append(fence_file(file_path, rel))
     else:
         parts.append(fence_file(target_path, str(target_path)))
-    return "## Target\n\n" + "\n".join(parts)
+    return "## Target\n\n" + skipped_block(notes) + "\n".join(parts)
 
 
-def run_git_diff(target: str) -> str:
-    args = ["git", "diff", target] if ".." in target else ["git", "diff", f"{target}~1", target]
-    proc = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")
+def skipped_block(notes: list[str]) -> str:
+    if not notes:
+        return ""
+    return "Skipped by default exclusions:\n" + "".join(f"- {n}\n" for n in notes) + "\n"
+
+
+def lockfile_excludes() -> list[str]:
+    return [f":(exclude,top,glob)**/{name}" for name in sorted(LOCKFILES)]
+
+
+def diff_args(target: str | None) -> list[str]:
+    """`git diff` arguments (without pathspec) for a rev, a range, or the working tree (None)."""
+    if target is None:
+        return ["diff", "HEAD"]
+    return ["diff", target] if ".." in target else ["diff", f"{target}~1", target]
+
+
+def run_git_diff(base_args: list[str], label: str) -> tuple[str, list[str]]:
+    """Diff with lockfiles excluded; returns (diff text, skip notes). Exits 1 on git error or nothing to review."""
+    proc = subprocess.run(
+        ["git", *base_args, "--", ":(top)", *lockfile_excludes()], capture_output=True, text=True, encoding="utf-8"
+    )
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
         sys.exit(1)
-    if not proc.stdout:
-        sys.stderr.write(f"empty diff for {target}\n")
-        sys.exit(1)
-    return proc.stdout
+    if proc.stdout:
+        return proc.stdout, diff_skip_notes(base_args)
+    notes = diff_skip_notes(base_args)
+    if notes:
+        sys.stderr.write(f"diff for {label} touches only excluded files ({'; '.join(notes)}); pass the file explicitly\n")
+    else:
+        sys.stderr.write(f"empty diff for {label}\n")
+    sys.exit(1)
+
+
+def diff_skip_notes(base_args: list[str]) -> list[str]:
+    names = git_lines([*base_args, "--name-only", "--", ":(top)"]) or []
+    return [f"lockfile: {n}" for n in names if n.rsplit("/", 1)[-1] in LOCKFILES]
 
 
 def get_base_sha() -> str:
@@ -129,18 +214,36 @@ def cmd_build(args: argparse.Namespace) -> int:
     packet_text = (root / "packet.md").read_text(encoding="utf-8")
     template_text = (root / "TEMPLATE.md").read_text(encoding="utf-8")
 
-    target_path = Path(args.target)
-    if target_path.exists():
-        target_section = build_target_section(target_path)
+    target_label = args.target
+    if args.target is not None and Path(args.target).exists():
+        target_section = build_target_section(Path(args.target))
     else:
-        diff_text = run_git_diff(args.target)
-        target_section = f"## Target\n\n{fence(diff_text, 'diff')}"
+        if args.target is None:
+            target_label = "working tree"
+            clean = subprocess.run(
+                ["git", "diff", "HEAD", "--quiet", "--", ":(top)", *lockfile_excludes()], capture_output=True
+            )
+            lock_only = (
+                clean.returncode == 0
+                and subprocess.run(["git", "diff", "HEAD", "--quiet", "--", ":(top)"], capture_output=True).returncode
+                == 1
+            )
+            if clean.returncode == 0 and not lock_only:
+                target_label = "working tree (clean; reviewing HEAD)"
+                base_args = diff_args("HEAD")
+            else:
+                # A lockfile-only change reaches run_git_diff as an empty diff with skip notes and exits 1 there.
+                base_args = diff_args(None)
+        else:
+            base_args = diff_args(args.target)
+        diff_text, notes = run_git_diff(base_args, target_label)
+        target_section = f"## Target\n\n{skipped_block(notes)}{fence(diff_text, 'diff')}"
 
     base_sha = get_base_sha()
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     focus = args.focus if args.focus else "none"
     filled_template = fill_template(
-        template_text, args.target, base_sha, date_str, focus, args.method, args.kind, args.lang
+        template_text, target_label, base_sha, date_str, focus, args.method, args.kind, args.lang
     )
 
     packet = (
@@ -448,6 +551,13 @@ def check_low_conf(lines: list[str], findings: list[tuple[int, str, str]]) -> li
     return warnings
 
 
+def check_nit_cap(findings: list[tuple[int, str, str]]) -> list[tuple[str, str]]:
+    nits = sum(1 for _, level, _ in findings if level == "Nit")
+    if nits > MAX_NITS:
+        return [("nit-cap", f"{nits} Nit findings, at most {MAX_NITS} allowed; fold the extras into one")]
+    return []
+
+
 def run_checks(
     lines: list[str], expect: str, dispatcher_method: str | None = None
 ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
@@ -481,6 +591,7 @@ def run_checks(
     method_value = dispatcher_method if dispatcher_method is not None else doc_method
     errors += check_method(method_value, data_rows)
     warnings += check_low_conf(lines, findings)
+    warnings += check_nit_cap(findings)
 
     return errors, warnings
 
@@ -549,7 +660,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_build = sub.add_parser("build")
-    p_build.add_argument("target")
+    p_build.add_argument("target", nargs="?", default=None)
     p_build.add_argument("-o", "--out", required=True)
     p_build.add_argument("--kind", choices=["service", "cli", "script", "doc"], default="script")
     p_build.add_argument("--lang", choices=["ko", "en"], default="ko")
