@@ -5,10 +5,17 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    tomllib = None
 
 SKIP_DIRS = {".git", "__pycache__", ".venv"}
 LOCKFILES = {
@@ -355,7 +362,8 @@ def check_reviewer(header_lines: list[str], expect: str) -> tuple[list[tuple[str
     self_line = next((l for l in header_lines if l.startswith("Self-identified:")), None)
     if self_line is not None:
         value = self_line[len("Self-identified:"):].strip()
-        if value != expect:
+        alias_match = value == expect or value.startswith(expect + "-")
+        if expect != "codex-default" and not alias_match:
             warnings.append(("reviewer", f"Self-identified is {value!r}, differs from --expect {expect!r}"))
     return errors, warnings
 
@@ -626,25 +634,237 @@ def cmd_check(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def cmd_codex_model(args: argparse.Namespace) -> int:
-    """Print the top-level model from Codex's config."""
+def read_codex_model() -> str:
+    """Return the stamp for the model Codex will use, without ever selecting one.
+
+    The top-level `model` string; `codex-default` when it is unset, the config is unreadable or
+    invalid, or a top-level `profile` is set (the profile decides the model).
+    """
     codex_home = os.environ.get("CODEX_HOME")
     path = (Path(codex_home) if codex_home else Path.home() / ".codex") / "config.toml"
     try:
         text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        print(f"config file missing: {path}", file=sys.stderr)
-        return 2
+    except (OSError, UnicodeDecodeError):
+        return "codex-default"
 
+    if tomllib is not None:
+        try:
+            config = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            return "codex-default"
+        model = config.get("model")
+        if "profile" in config:
+            return "codex-default"
+        return model if isinstance(model, str) and model else "codex-default"
+
+    model = "codex-default"
     for line in text.splitlines():
         if line.strip().startswith("["):
             break
-        match = re.match(r'^\s*model\s*=\s*"([^"]+)"', line)
+        if re.match(r"^\s*profile\s*=", line):
+            return "codex-default"
+        match = re.match(r"""^\s*model\s*=\s*(?:"([^"]+)"|'([^']+)')""", line)
         if match:
-            print(match.group(1))
-            return 0
-    print(f"no top-level model key in {path}", file=sys.stderr)
-    return 2
+            model = match.group(1) or match.group(2)
+    return model
+
+
+def cmd_codex_model(args: argparse.Namespace) -> int:
+    """Print the model `read_codex_model` resolves."""
+    print(read_codex_model())
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# run
+# ---------------------------------------------------------------------------
+
+READ_ONLY_GIT = ("diff", "show", "log", "status", "blame")
+EXIT_USAGE, EXIT_UNAVAILABLE, EXIT_TIMEOUT, EXIT_FAILED, EXIT_NO_OUTPUT = 2, 3, 4, 5, 6
+LOGIN_TIMEOUT = 30
+KILL_TIMEOUT = 10
+CMD_UNSAFE_CHARS = '&|<>^%!"'
+# git writes files through --output (and its unique-prefix abbreviations) even in read-only subcommands;
+# --ext-diff and --textconv run external programs from the repo's configuration.
+GIT_WRITE_DENY = ("Bash(git *--out*)", "Bash(git *--ext-diff*)", "Bash(git *--textconv*)")
+
+
+def claude_tools(allow: list[str]) -> str:
+    """Build the `--allowedTools` value: read tools, read-only git, then caller patterns."""
+    git = [f"Bash(git {sub} *)" for sub in READ_ONLY_GIT]
+    return " ".join(["Read", "Grep", "Glob", *git, *allow])
+
+
+def codex_argv(codex: str, repo: str, out: str, method: str) -> list[str]:
+    """Build the `codex exec` argv; no `-m`, so an active profile keeps choosing the model."""
+    sandbox = "workspace-write" if method == "TEST" else "read-only"
+    return [codex, "exec", "-s", sandbox, "-C", repo, "-c", "model_reasoning_effort=high", "-o", out, "-"]
+
+
+def claude_argv(claude: str, allow: list[str]) -> list[str]:
+    """Build the `claude -p` argv.
+
+    `--tools` removes Edit/Write/WebFetch whatever the user's settings allow; Bash allow rules in
+    the user's own settings still apply. `--strict-mcp-config` without `--mcp-config` loads no MCP
+    servers, so user-allowed MCP write tools are unavailable.
+    """
+    return [
+        claude, "-p", "--model", "opus", "--permission-mode", "dontAsk",
+        "--tools", "Read,Grep,Glob,Bash", "--strict-mcp-config",
+        "--disallowedTools", *GIT_WRITE_DENY,
+        "--allowedTools", claude_tools(allow),
+    ]
+
+
+def kill_tree(proc: subprocess.Popen) -> None:
+    """Kill the engine and its children (npm shims spawn node under cmd.exe)."""
+    if os.name == "nt":
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, timeout=KILL_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            pass
+    else:
+        try:
+            os.killpg(proc.pid, 9)
+        except ProcessLookupError:
+            pass
+    proc.kill()
+
+
+def run_bounded(
+    argv: list[str], *, stdin_bytes: bytes | None, stdout, cwd: str, timeout: float
+) -> tuple[int | None, bytes]:
+    """Run `argv` and return `(returncode, stderr)`; returncode is None when `timeout` expired.
+
+    On expiry the whole process tree is killed and the pipes are drained for at most KILL_TIMEOUT,
+    so a grandchild still holding them cannot hang the caller.
+    """
+    proc = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL if stdin_bytes is None else subprocess.PIPE,
+        stdout=stdout,
+        stderr=subprocess.PIPE,
+        start_new_session=os.name != "nt",
+    )
+    try:
+        _, stderr = proc.communicate(stdin_bytes, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_tree(proc)
+        try:
+            proc.communicate(timeout=KILL_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            pass
+        return None, b""
+    return proc.returncode, stderr
+
+
+def positive_int(value: str) -> int:
+    """Argparse type for a strictly positive integer."""
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be > 0")
+    return number
+
+
+def tail(data: bytes, lines: int = 20) -> str:
+    return "\n".join(data.decode("utf-8", errors="replace").splitlines()[-lines:])
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """Run one review engine on a packet and write its document to `--out`.
+
+    The engine writes to a temp file next to `--out`; an existing `--out` is replaced only by a
+    non-empty successful result.
+
+    Exit codes: 2 bad paths, 3 engine unavailable, 4 timeout, 5 engine failed, 6 no output.
+    On success the only stdout line is `expect: <stamp>`, the value for `check --expect`.
+    """
+    exe = shutil.which(args.engine)
+    if exe is None:
+        print(f"engine unavailable: {args.engine} not on PATH", file=sys.stderr)
+        return EXIT_UNAVAILABLE
+    if args.engine == "codex":
+        login_code, _ = run_bounded(
+            [exe, "login", "status"],
+            stdin_bytes=None,
+            stdout=subprocess.DEVNULL,
+            cwd=os.getcwd(),
+            timeout=LOGIN_TIMEOUT,
+        )
+        if login_code is None:
+            print("engine unavailable: codex login status timed out", file=sys.stderr)
+            return EXIT_UNAVAILABLE
+        if login_code != 0:
+            print("engine unavailable: codex not logged in", file=sys.stderr)
+            return EXIT_UNAVAILABLE
+
+    repo = str(Path(args.repo).resolve())
+    out = Path(args.out).resolve()
+    packet_path = Path(args.packet).resolve()
+    try:
+        packet = packet_path.read_bytes()
+    except OSError as exc:
+        print(f"cannot read packet: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    if out == packet_path or (out.exists() and os.path.samefile(out, packet_path)):
+        print("--out must not be the same file as --packet", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{out.name}.", suffix=".tmp", dir=out.parent)
+    except OSError as exc:
+        print(f"cannot create output file: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        return run_engine(args, exe, repo, packet, tmp, out)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            print(f"tmp: {tmp} left behind", file=sys.stderr)
+
+
+def run_engine(args: argparse.Namespace, exe: str, repo: str, packet: bytes, tmp: Path, out: Path) -> int:
+    """Run the engine into `tmp` and move it over `out`; the caller removes `tmp`."""
+    if os.name == "nt" and exe.lower().endswith((".cmd", ".bat")):
+        for label, value in (("--repo", repo), ("output path", str(tmp))):
+            bad = sorted(set(value) & set(CMD_UNSAFE_CHARS))
+            if bad:
+                print(
+                    f"engine unavailable: {label} {value!r} contains {' '.join(bad)}, "
+                    "which cmd.exe would interpret for a .cmd/.bat shim",
+                    file=sys.stderr,
+                )
+                return EXIT_UNAVAILABLE
+
+    if args.engine == "codex":
+        model = read_codex_model()
+        argv = codex_argv(exe, repo, str(tmp), args.method)
+        stamp = model
+        sink_path = os.devnull
+    else:
+        argv = claude_argv(exe, args.allow)
+        stamp = "claude-opus"
+        sink_path = str(tmp)
+
+    with open(sink_path, "wb") as sink:
+        returncode, stderr = run_bounded(argv, stdin_bytes=packet, stdout=sink, cwd=repo, timeout=args.timeout)
+    if returncode is None:
+        print(f"engine timeout after {args.timeout} s", file=sys.stderr)
+        return EXIT_TIMEOUT
+
+    if returncode != 0:
+        print(f"engine failed: exit {returncode}\n{tail(stderr)}", file=sys.stderr)
+        return EXIT_FAILED
+    if tmp.stat().st_size == 0:
+        print("engine produced no output", file=sys.stderr)
+        return EXIT_NO_OUTPUT
+    os.replace(tmp, out)
+    print(f"expect: {stamp}")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -663,7 +883,7 @@ def main() -> int:
     p_build.add_argument("target", nargs="?", default=None)
     p_build.add_argument("-o", "--out", required=True)
     p_build.add_argument("--kind", choices=["service", "cli", "script", "doc"], default="script")
-    p_build.add_argument("--lang", choices=["ko", "en"], default="ko")
+    p_build.add_argument("--lang", choices=["ko", "en"], default="en")
     p_build.add_argument("--focus", default=None)
     p_build.add_argument("--method", choices=["STATIC", "TEST", "LIVE"], default="STATIC")
     p_build.add_argument("--max-bytes", type=int, default=400000)
@@ -678,6 +898,16 @@ def main() -> int:
 
     p_codex_model = sub.add_parser("codex-model")
     p_codex_model.set_defaults(func=cmd_codex_model)
+
+    p_run = sub.add_parser("run")
+    p_run.add_argument("--engine", choices=["codex", "claude"], required=True)
+    p_run.add_argument("--repo", required=True)
+    p_run.add_argument("--packet", required=True)
+    p_run.add_argument("--out", required=True)
+    p_run.add_argument("--method", choices=["STATIC", "TEST", "LIVE"], default="STATIC")
+    p_run.add_argument("--allow", action="append", default=[], metavar="PATTERN")
+    p_run.add_argument("--timeout", type=positive_int, default=600)
+    p_run.set_defaults(func=cmd_run)
 
     args = parser.parse_args()
     return args.func(args)

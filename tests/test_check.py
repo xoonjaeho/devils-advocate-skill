@@ -119,7 +119,7 @@ def test_counts_mismatch_fails(tmp_path):
 
 
 def test_reviewer_mismatch_fails(tmp_path):
-    content = BASE_FIXTURE.replace("Reviewer: claude-opus-5\n", "Reviewer: gpt-6.1-sol\n")
+    content = BASE_FIXTURE.replace("Reviewer: claude-opus-5\n", "Reviewer: gpt-x\n")
     path = write_fixture(tmp_path, content)
     result = run_check(path)
     assert result.returncode == 1
@@ -208,10 +208,33 @@ def test_preamble_fails(tmp_path):
 
 
 def test_self_identified_mismatch_only_warns(tmp_path):
-    content = BASE_FIXTURE.replace("Self-identified: claude-opus-5", "Self-identified: gpt-6.1-sol")
+    content = BASE_FIXTURE.replace("Self-identified: claude-opus-5", "Self-identified: gpt-x")
     path = write_fixture(tmp_path, content)
     result = run_check(path)
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "WARN: reviewer" in result.stdout
+
+
+def _self_identified(tmp_path, value, expect):
+    content = BASE_FIXTURE.replace("Self-identified: claude-opus-5", f"Self-identified: {value}")
+    content = content.replace("Reviewer: claude-opus-5", f"Reviewer: {expect}")
+    return run_check(write_fixture(tmp_path, content), expect=expect)
+
+
+def test_self_identified_prefix_alias_does_not_warn(tmp_path):
+    result = _self_identified(tmp_path, "claude-opus-5-5", "claude-opus")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "WARN" not in result.stdout
+
+
+def test_self_identified_codex_default_never_warns(tmp_path):
+    result = _self_identified(tmp_path, "gpt-whatever", "codex-default")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "WARN" not in result.stdout
+
+
+def test_self_identified_alias_mismatch_still_warns(tmp_path):
+    result = _self_identified(tmp_path, "claude-opusx", "claude-opus")
     assert "WARN: reviewer" in result.stdout
 
 
@@ -252,6 +275,19 @@ def test_build_fences_diff_and_prefills_header(tmp_path):
     assert "Lang: en" in packet
     assert not re.search(r"(?m)^Reviewer:", packet), "template's Reviewer: header line must be stripped"
     assert "## Output template" in packet
+
+
+def test_build_without_lang_defaults_to_en(tmp_path):
+    target = tmp_path / "small.txt"
+    target.write_text("hello\n", encoding="utf-8")
+    out_path = tmp_path / "packet.md"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "build", str(target), "-o", str(out_path)],
+        capture_output=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Lang: en" in out_path.read_text(encoding="utf-8")
 
 
 def test_build_rejects_oversized_packet(tmp_path):

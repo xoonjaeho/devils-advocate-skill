@@ -1,6 +1,6 @@
 # 😈 Devil's Advocate Review — <target one-liner>
 
-Reviewer: <stamped by SKILL.md from the dispatch path — claude-opus-5-5 / codex's configured model>
+Reviewer: <stamped by SKILL.md from the dispatch path — claude-opus / codex's configured model>
 Self-identified: <the model id you believe you are — written by the engine, never checked, mismatch = warning>
 Target: <commit range | path | PR>   Base: <sha>   Date: <YYYY-MM-DD HH:mm>
 Scope: <files reviewed / files skipped and why>   Focus: <--focus or "none">

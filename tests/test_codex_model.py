@@ -7,6 +7,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "advocate.py"
 
 
@@ -45,16 +52,56 @@ def test_profile_model_is_not_a_top_level_model(tmp_path: Path) -> None:
 
     result = run_codex_model(tmp_path)
 
-    assert result.returncode == 2
-    assert result.stdout == ""
-    assert len(result.stderr.splitlines()) == 1
-    assert str(config_path) in result.stderr
+    assert result.returncode == 0
+    assert result.stdout == "codex-default\n"
+    assert result.stderr == ""
 
 
-def test_missing_config_reports_path(tmp_path: Path) -> None:
+def test_top_level_profile_means_codex_default(tmp_path: Path) -> None:
+    (tmp_path / "config.toml").write_text(
+        'model = "gpt-x"\n'
+        'profile = "p"\n'
+        "[profiles.p]\n"
+        'model = "other"\n',
+        encoding="utf-8",
+    )
+
     result = run_codex_model(tmp_path)
 
-    assert result.returncode == 2
-    assert result.stdout == ""
-    assert len(result.stderr.splitlines()) == 1
-    assert str(tmp_path / "config.toml") in result.stderr
+    assert result.stdout == "codex-default\n"
+
+
+def test_non_utf8_config_falls_back_to_codex_default(tmp_path: Path) -> None:
+    (tmp_path / "config.toml").write_bytes(b'model = "gpt-x"\n# \xff\xfe\n')
+
+    result = run_codex_model(tmp_path)
+
+    assert result.returncode == 0
+    assert result.stdout == "codex-default\n"
+    assert result.stderr == ""
+
+
+def test_missing_config_falls_back_to_codex_default(tmp_path: Path) -> None:
+    result = run_codex_model(tmp_path)
+
+    assert result.returncode == 0
+    assert result.stdout == "codex-default\n"
+    assert result.stderr == ""
+
+
+def test_single_quoted_model_is_accepted(tmp_path: Path) -> None:
+    (tmp_path / "config.toml").write_text("model = 'gpt-y'\n", encoding="utf-8")
+
+    result = run_codex_model(tmp_path)
+
+    assert result.returncode == 0
+    assert result.stdout == "gpt-y\n"
+
+
+@pytest.mark.skipif(tomllib is None, reason="needs tomllib (Python 3.11+)")
+def test_toml_escape_in_model_is_decoded(tmp_path):
+    (tmp_path / "config.toml").write_text('model = "gpt-\\u0078"\n', encoding="utf-8")
+
+    result = run_codex_model(tmp_path)
+
+    assert result.stdout.strip() == "gpt-x"
