@@ -342,10 +342,57 @@ def test_unlink_failure_keeps_exit_code_and_reports_tmp(tmp_path, env, packet, m
     repo.mkdir()
     args = advocate.argparse.Namespace(
         engine="claude", repo=str(repo), packet=str(packet), out=str(tmp_path / "out.md"),
-        method="STATIC", allow=[], timeout=30,
+        method="STATIC", allow=[], timeout=30, model=None, effort=None,
     )
 
     code = advocate.cmd_run(args)
 
     assert code == 5
     assert "left behind" in capsys.readouterr().err
+
+
+def test_codex_model_and_effort_reach_argv_and_expect(tmp_path, env, packet):
+    result, _, repo = run(tmp_path, env, packet, "codex", "--model", "gpt-6.2-astra", "--effort", "xhigh")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "expect: gpt-6.2-astra\n"
+    argv = logged(env)["argv"]
+    assert argv[:8] == [
+        "exec", "-s", "read-only", "-C", str(repo.resolve()),
+        "-m", "gpt-6.2-astra", "-c",
+    ]
+    assert argv[8] == "model_reasoning_effort=xhigh"
+    assert argv[9] == "-o" and argv[11] == "-" and len(argv) == 12
+
+
+def test_codex_model_flag_overrides_config_stamp(tmp_path, env, packet):
+    Path(env["CODEX_HOME"], "config.toml").write_text("model = 'gpt-x'\n", encoding="utf-8")
+
+    result, _, _ = run(tmp_path, env, packet, "codex", "--model", "gpt-y")
+
+    assert result.stdout == "expect: gpt-y\n"
+
+
+def test_claude_model_and_effort_reach_argv_and_expect(tmp_path, env, packet):
+    result, _, _ = run(tmp_path, env, packet, "claude", "--model", "fable", "--effort", "max")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "expect: claude-fable\n"
+    argv = logged(env)["argv"]
+    assert argv[:6] == ["-p", "--model", "fable", "--effort", "max", "--permission-mode"]
+
+
+def test_claude_full_model_id_is_not_double_prefixed(tmp_path, env, packet):
+    result, _, _ = run(tmp_path, env, packet, "claude", "--model", "claude-opus-4-7")
+
+    assert result.stdout == "expect: claude-opus-4-7\n"
+    assert "--effort" not in logged(env)["argv"]
+
+
+@pytest.mark.parametrize("engine, effort", [("codex", "max"), ("claude", "minimal"), ("codex", "bogus")])
+def test_invalid_effort_exits_2_without_running_engine(tmp_path, env, packet, engine, effort):
+    result, out, _ = run(tmp_path, env, packet, engine, "--effort", effort)
+
+    assert result.returncode == 2
+    assert f"--effort {effort!r}" in result.stderr
+    assert not Path(env["FAKE_LOG"]).exists() and not out.exists()

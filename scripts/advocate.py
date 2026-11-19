@@ -695,21 +695,28 @@ def claude_tools(allow: list[str]) -> str:
     return " ".join(["Read", "Grep", "Glob", *git, *allow])
 
 
-def codex_argv(codex: str, repo: str, out: str, method: str) -> list[str]:
-    """Build the `codex exec` argv; no `-m`, so an active profile keeps choosing the model."""
+def codex_argv(
+    codex: str, repo: str, out: str, method: str, model: str | None = None, effort: str = "high"
+) -> list[str]:
+    """Build the `codex exec` argv; without `model` there is no `-m`, so an active profile keeps choosing it."""
     sandbox = "workspace-write" if method == "TEST" else "read-only"
-    return [codex, "exec", "-s", sandbox, "-C", repo, "-c", "model_reasoning_effort=high", "-o", out, "-"]
+    model_args = ["-m", model] if model else []
+    return [
+        codex, "exec", "-s", sandbox, "-C", repo, *model_args,
+        "-c", f"model_reasoning_effort={effort}", "-o", out, "-",
+    ]
 
 
-def claude_argv(claude: str, allow: list[str]) -> list[str]:
+def claude_argv(claude: str, allow: list[str], model: str = "opus", effort: str | None = None) -> list[str]:
     """Build the `claude -p` argv.
 
     `--tools` removes Edit/Write/WebFetch whatever the user's settings allow; Bash allow rules in
     the user's own settings still apply. `--strict-mcp-config` without `--mcp-config` loads no MCP
     servers, so user-allowed MCP write tools are unavailable.
     """
+    effort_args = ["--effort", effort] if effort else []
     return [
-        claude, "-p", "--model", "opus", "--permission-mode", "dontAsk",
+        claude, "-p", "--model", model, *effort_args, "--permission-mode", "dontAsk",
         "--tools", "Read,Grep,Glob,Bash", "--strict-mcp-config",
         "--disallowedTools", *GIT_WRITE_DENY,
         "--allowedTools", claude_tools(allow),
@@ -759,6 +766,15 @@ def run_bounded(
     return proc.returncode, stderr
 
 
+CODEX_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
+CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+def claude_stamp(model: str) -> str:
+    """Reviewer stamp for a claude model: `claude-<alias>`, a full `claude-...` id kept as is."""
+    return model if model.startswith("claude-") else f"claude-{model}"
+
+
 def positive_int(value: str) -> int:
     """Argparse type for a strictly positive integer."""
     number = int(value)
@@ -780,6 +796,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     Exit codes: 2 bad paths, 3 engine unavailable, 4 timeout, 5 engine failed, 6 no output.
     On success the only stdout line is `expect: <stamp>`, the value for `check --expect`.
     """
+    efforts = CODEX_EFFORTS if args.engine == "codex" else CLAUDE_EFFORTS
+    if args.effort is not None and args.effort not in efforts:
+        print(f"--effort {args.effort!r} is not valid for {args.engine}: use one of {', '.join(efforts)}", file=sys.stderr)
+        return EXIT_USAGE
     exe = shutil.which(args.engine)
     if exe is None:
         print(f"engine unavailable: {args.engine} not on PATH", file=sys.stderr)
@@ -841,13 +861,13 @@ def run_engine(args: argparse.Namespace, exe: str, repo: str, packet: bytes, tmp
                 return EXIT_UNAVAILABLE
 
     if args.engine == "codex":
-        model = read_codex_model()
-        argv = codex_argv(exe, repo, str(tmp), args.method)
-        stamp = model
+        stamp = args.model or read_codex_model()
+        argv = codex_argv(exe, repo, str(tmp), args.method, args.model, args.effort or "high")
         sink_path = os.devnull
     else:
-        argv = claude_argv(exe, args.allow)
-        stamp = "claude-opus"
+        model = args.model or "opus"
+        argv = claude_argv(exe, args.allow, model, args.effort)
+        stamp = claude_stamp(model)
         sink_path = str(tmp)
 
     with open(sink_path, "wb") as sink:
@@ -906,6 +926,8 @@ def main() -> int:
     p_run.add_argument("--out", required=True)
     p_run.add_argument("--method", choices=["STATIC", "TEST", "LIVE"], default="STATIC")
     p_run.add_argument("--allow", action="append", default=[], metavar="PATTERN")
+    p_run.add_argument("--model", default=None)
+    p_run.add_argument("--effort", default=None)
     p_run.add_argument("--timeout", type=positive_int, default=600)
     p_run.set_defaults(func=cmd_run)
 
