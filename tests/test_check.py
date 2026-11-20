@@ -575,3 +575,37 @@ def test_no_target_lockfile_only_change_exits_one(tmp_path):
     assert result.returncode == 1
     assert "touches only excluded files" in result.stderr
     assert not out.exists()
+
+
+def _with_evidence(value: str, line: str = "- Evidence: the `with open(out_path, \"w\", ...)` block has no error handling around `f.write(packet)`.") -> str:
+    assert line in BASE_FIXTURE
+    return BASE_FIXTURE.replace(line, f"- Evidence: {value}", 1)
+
+
+def test_evidence_plain_text_html_tag_passes(tmp_path):
+    # regression: an HTML target quoted in plain text is evidence, not a leftover placeholder
+    content = _with_evidence('145 "<code>python -c \'…\'</code> runs the snippet"')
+    result = run_check(write_fixture(tmp_path, content))
+    assert result.returncode == 0, result.stdout
+
+
+def test_evidence_plain_text_html_entity_passes(tmp_path):
+    # regression: an escaped entity quoted in plain text is evidence, not a rendering bug
+    content = _with_evidence('145 "the page renders &lt;b&gt; literally"')
+    result = run_check(write_fixture(tmp_path, content))
+    assert result.returncode == 0, result.stdout
+
+
+def test_evidence_that_is_only_the_template_slot_fails(tmp_path):
+    slot = "<verbatim quote ≤5 lines, repro command + output, or a citation — never \"looks wrong\">"
+    result = run_check(write_fixture(tmp_path, _with_evidence(slot)))
+    assert result.returncode == 1
+    assert "FAIL: placeholder" in result.stdout
+
+
+def test_non_evidence_prose_keeps_placeholder_and_entity_rules(tmp_path):
+    impact = "Impact: a caller could see a truncated packet file and mistake it for a complete one."
+    tag = write_fixture(tmp_path, BASE_FIXTURE.replace(impact, "Impact: see <something> here."), "tag.md")
+    ent = write_fixture(tmp_path, BASE_FIXTURE.replace(impact, "Impact: see &lt;x here."), "ent.md")
+    assert "FAIL: placeholder" in run_check(tag).stdout
+    assert "FAIL: entity" in run_check(ent).stdout

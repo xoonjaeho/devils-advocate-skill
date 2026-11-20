@@ -47,6 +47,7 @@ WHERE_LOC_RE = re.compile(r"`\S+:\d+`")
 PLACEHOLDER_RE = re.compile(r"<[^<>\n]+>")
 INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
 ENTITY_RE = re.compile(r"&lt;|&gt;|&amp;")
+EVIDENCE_LINE_RE = re.compile(r"^\s*[-*]\s+Evidence:(?P<value>.*)$")
 ALT_BULLETS = ["Current:", "Proposed:", "Better on:", "Costs:", "Evidence:"]
 FINDING_BULLETS = ["Where:", "Claim:", "Evidence:", "Impact:", "Fix:"]
 COUNT_LABEL_RE = {
@@ -377,6 +378,12 @@ def check_placeholder(lines: list[str]) -> list[tuple[str, str]]:
             continue
         if in_fence:
             continue
+        evidence = EVIDENCE_LINE_RE.match(line)
+        if evidence:
+            # Evidence quotes HTML verbatim; only a value that is a lone template slot is unfilled.
+            if PLACEHOLDER_RE.fullmatch(evidence["value"].strip()):
+                errors.append(("placeholder", f"leftover placeholder in line: {line.strip()!r}"))
+            continue
         cleaned = INLINE_CODE_RE.sub("", line)
         for _ in PLACEHOLDER_RE.finditer(cleaned):
             errors.append(("placeholder", f"leftover placeholder in line: {line.strip()!r}"))
@@ -387,6 +394,8 @@ def check_entity(lines: list[str]) -> list[tuple[str, str]]:
     """Entities in prose are a rendering bug; inside fences or inline code they are quoted evidence."""
     errors = []
     for line in visible(lines):
+        if EVIDENCE_LINE_RE.match(line):
+            continue
         for m in ENTITY_RE.finditer(INLINE_CODE_RE.sub("", line)):
             errors.append(("entity", f"HTML entity found: {m.group(0)!r}"))
     return errors
