@@ -65,7 +65,7 @@ git clone https://github.com/xoonjaeho/devils-advocate-skill.git ~/.claude/skill
 git clone https://github.com/xoonjaeho/devils-advocate-skill.git ~/.agents/skills/devils-advocate
 ```
 
-Requires Python 3.10+ (`run` reads Codex's `config.toml` exactly with `tomllib` on 3.11+; 3.10 works with a regex fallback) (`python3` on macOS/Linux, `python` on Windows; the skill picks whichever exists) and git. Engine CLIs: Claude Code (`claude`) and/or Codex CLI (`codex`, logged in). The codex engine needs no plugin. The claude engine runs with `--tools Read,Grep,Glob,Bash` and read-only git patterns; Bash allow rules in your own Claude settings still apply.
+Requires Python 3.10+ (`run` reads Codex's `config.toml` exactly with `tomllib` on 3.11+; 3.10 works with a regex fallback) (`python3` on macOS/Linux, `python` on Windows; the skill picks whichever exists) and git. Engine CLIs: Claude Code (`claude`) and/or Codex CLI (`codex`, logged in). The codex engine needs no plugin. The claude engine runs with `--tools Read,Grep,Glob,Bash` and read-only git patterns; Bash allow rules in your own Claude settings still apply. It also loads only your `serena` and `codebase-memory-mcp` servers (taken from `~/.claude.json`; a missing one is skipped) with their read tools allowed and their write tools denied; Serena activation creates an untracked `.serena/` in the reviewed repo.
 
 ## Tests
 

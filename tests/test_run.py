@@ -29,8 +29,11 @@ if argv[:2] == ["login", "status"]:
         time.sleep(30)
     sys.exit(1 if mode == "login_fail" else 0)
 stdin = sys.stdin.buffer.read()
+mcp = None
+if "--mcp-config" in argv:
+    mcp = open(argv[argv.index("--mcp-config") + 1], encoding="utf-8").read()
 with open(os.environ["FAKE_LOG"], "w", encoding="utf-8") as f:
-    json.dump({"argv": argv, "stdin": stdin.decode("utf-8")}, f)
+    json.dump({"argv": argv, "stdin": stdin.decode("utf-8"), "mcp": mcp}, f)
 if mode == "sleep":
     time.sleep(30)
 if mode == "fail":
@@ -59,6 +62,11 @@ def install_fake(bin_dir: Path, name: str) -> None:
         wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
 
 
+def write_user_config(home: Path, names: list[str]) -> None:
+    servers = {n: {"type": "stdio", "command": f"{n}-cmd", "args": ["--x"]} for n in names}
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": servers}), encoding="utf-8")
+
+
 @pytest.fixture
 def env(tmp_path: Path):
     bin_dir = tmp_path / "bin"
@@ -67,10 +75,15 @@ def env(tmp_path: Path):
     install_fake(bin_dir, "claude")
     codex_home = tmp_path / "codexhome"
     codex_home.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    write_user_config(home, ["serena", "codebase-memory-mcp", "playwright"])
     return {
         **os.environ,
         "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
         "CODEX_HOME": str(codex_home),
+        "USERPROFILE": str(home),
+        "HOME": str(home),
         "FAKE_LOG": str(tmp_path / "log.json"),
         "FAKE_DOC": DOC,
         "PYTHONUTF8": "1",
@@ -145,19 +158,65 @@ def test_claude_argv_has_read_only_git_and_allow_pattern(tmp_path, env, packet):
     assert argv[:5] == ["-p", "--model", "opus", "--permission-mode", "dontAsk"]
     assert argv[5:7] == ["--tools", "Read,Grep,Glob,Bash"]
     assert argv[7] == "--strict-mcp-config"
-    assert argv[8:12] == [
+    assert argv[8] == "--mcp-config"
+    assert argv[10:14] == [
         "--disallowedTools", "Bash(git *--out*)", "Bash(git *--ext-diff*)", "Bash(git *--textconv*)",
     ]
-    assert argv[12] == "--allowedTools"
-    assert "--mcp-config" not in argv
-    tools = argv[13]
+    allowed_at = argv.index("--allowedTools")
+    tools = argv[allowed_at + 1]
     assert "Bash(git *)" not in tools
     assert "Bash(git grep *)" not in tools
     assert "Bash(git diff *)" in tools and "Bash(git blame *)" in tools
     assert tools.split(" ", 2)[:2] == ["Read", "Grep"]
     assert tools.endswith(allow)
-    assert len(argv) == 14
+    assert len(argv) == allowed_at + 2
     assert log["stdin"] == "packet 한글\n"
+
+
+def test_claude_mcp_config_has_only_serena_and_codebase_memory(tmp_path, env, packet):
+    result, _, _ = run(tmp_path, env, packet, "claude")
+
+    assert result.returncode == 0, result.stderr
+    log = logged(env)
+    assert json.loads(log["mcp"]) == {"mcpServers": {
+        "serena": {"type": "stdio", "command": "serena-cmd", "args": ["--x"]},
+        "codebase-memory-mcp": {"type": "stdio", "command": "codebase-memory-mcp-cmd", "args": ["--x"]},
+    }}
+    assert not Path(log["argv"][log["argv"].index("--mcp-config") + 1]).exists()
+
+
+def test_claude_mcp_read_tools_allowed_write_tools_denied(tmp_path, env, packet):
+    result, _, _ = run(tmp_path, env, packet, "claude")
+
+    assert result.returncode == 0, result.stderr
+    argv = logged(env)["argv"]
+    allowed = argv[argv.index("--allowedTools") + 1].split(" ")
+    denied = argv[argv.index("--disallowedTools") + 1:argv.index("--allowedTools")]
+    for tool in ("mcp__serena__find_symbol", "mcp__serena__activate_project",
+                 "mcp__codebase-memory-mcp__trace_path", "mcp__codebase-memory-mcp__check_index_coverage"):
+        assert tool in allowed and tool not in denied
+    for tool in ("mcp__serena__replace_symbol_body", "mcp__serena__write_memory",
+                 "mcp__codebase-memory-mcp__index_repository", "mcp__codebase-memory-mcp__ingest_traces"):
+        assert tool in denied and tool not in allowed
+
+
+def test_claude_mcp_missing_server_is_skipped(tmp_path, env, packet):
+    write_user_config(Path(env["HOME"]), ["codebase-memory-mcp", "playwright"])
+
+    result, _, _ = run(tmp_path, env, packet, "claude")
+
+    assert result.returncode == 0, result.stderr
+    assert list(json.loads(logged(env)["mcp"])["mcpServers"]) == ["codebase-memory-mcp"]
+
+
+def test_claude_without_user_servers_passes_no_mcp_config(tmp_path, env, packet):
+    write_user_config(Path(env["HOME"]), ["playwright"])
+
+    result, _, _ = run(tmp_path, env, packet, "claude")
+
+    assert result.returncode == 0, result.stderr
+    argv = logged(env)["argv"]
+    assert "--strict-mcp-config" in argv and "--mcp-config" not in argv
 
 
 def test_missing_cli_exits_3(tmp_path, env, packet):

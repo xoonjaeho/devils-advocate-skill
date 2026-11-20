@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -696,12 +697,49 @@ CMD_UNSAFE_CHARS = '&|<>^%!"'
 # git writes files through --output (and its unique-prefix abbreviations) even in read-only subcommands;
 # --ext-diff and --textconv run external programs from the repo's configuration.
 GIT_WRITE_DENY = ("Bash(git *--out*)", "Bash(git *--ext-diff*)", "Bash(git *--textconv*)")
+MCP_SERVERS = ("serena", "codebase-memory-mcp")
+MCP_READ_TOOLS = tuple(
+    f"mcp__{server}__{tool}"
+    for server, tools in (
+        ("serena", ("activate_project", "find_symbol", "find_referencing_symbols", "get_symbols_overview",
+                    "find_declaration", "find_implementations")),
+        ("codebase-memory-mcp", ("search_graph", "query_graph", "trace_path", "get_code_snippet",
+                                 "get_architecture", "search_code", "detect_changes", "list_projects",
+                                 "index_status", "check_index_coverage")),
+    )
+    for tool in tools
+)
+MCP_WRITE_TOOLS = tuple(
+    f"mcp__{server}__{tool}"
+    for server, tools in (
+        ("serena", ("replace_symbol_body", "insert_after_symbol", "insert_before_symbol", "rename_symbol",
+                    "replace_content", "replace_in_files", "safe_delete_symbol", "write_memory", "edit_memory",
+                    "delete_memory", "rename_memory")),
+        ("codebase-memory-mcp", ("index_repository", "delete_project", "manage_adr", "ingest_traces")),
+    )
+    for tool in tools
+)
+
+
+def mcp_config_json(user_config: Path | None = None) -> str | None:
+    """Return an `--mcp-config` JSON of the user's `serena` / `codebase-memory-mcp` definitions.
+
+    Reads user-scope `mcpServers` from `~/.claude.json`; a server the user has not defined is skipped.
+    Returns None when neither is defined or the file is unreadable.
+    """
+    path = user_config or Path.home() / ".claude.json"
+    try:
+        defined = json.loads(path.read_text(encoding="utf-8")).get("mcpServers", {})
+    except (OSError, ValueError, AttributeError):
+        return None
+    servers = {name: defined[name] for name in MCP_SERVERS if isinstance(defined.get(name), dict)}
+    return json.dumps({"mcpServers": servers}) if servers else None
 
 
 def claude_tools(allow: list[str]) -> str:
     """Build the `--allowedTools` value: read tools, read-only git, then caller patterns."""
     git = [f"Bash(git {sub} *)" for sub in READ_ONLY_GIT]
-    return " ".join(["Read", "Grep", "Glob", *git, *allow])
+    return " ".join(["Read", "Grep", "Glob", *git, *MCP_READ_TOOLS, *allow])
 
 
 def codex_argv(
@@ -716,18 +754,21 @@ def codex_argv(
     ]
 
 
-def claude_argv(claude: str, allow: list[str], model: str = "opus", effort: str | None = None) -> list[str]:
+def claude_argv(
+    claude: str, allow: list[str], model: str = "opus", effort: str | None = None, mcp_config: str | None = None
+) -> list[str]:
     """Build the `claude -p` argv.
 
     `--tools` removes Edit/Write/WebFetch whatever the user's settings allow; Bash allow rules in
-    the user's own settings still apply. `--strict-mcp-config` without `--mcp-config` loads no MCP
-    servers, so user-allowed MCP write tools are unavailable.
+    the user's own settings still apply. `--strict-mcp-config` limits MCP to the file at `mcp_config`
+    (serena and codebase-memory-mcp only; none when it is None); their write tools are denied.
     """
     effort_args = ["--effort", effort] if effort else []
+    mcp_args = ["--mcp-config", mcp_config] if mcp_config else []
     return [
         claude, "-p", "--model", model, *effort_args, "--permission-mode", "dontAsk",
-        "--tools", "Read,Grep,Glob,Bash", "--strict-mcp-config",
-        "--disallowedTools", *GIT_WRITE_DENY,
+        "--tools", "Read,Grep,Glob,Bash", "--strict-mcp-config", *mcp_args,
+        "--disallowedTools", *GIT_WRITE_DENY, *MCP_WRITE_TOOLS,
         "--allowedTools", claude_tools(allow),
     ]
 
@@ -875,12 +916,20 @@ def run_engine(args: argparse.Namespace, exe: str, repo: str, packet: bytes, tmp
         sink_path = os.devnull
     else:
         model = args.model or "opus"
-        argv = claude_argv(exe, args.allow, model, args.effort)
+        mcp_json = mcp_config_json()
+        mcp_file = Path(f"{tmp}.mcp.json")
+        if mcp_json:
+            mcp_file.write_text(mcp_json, encoding="utf-8")
+        argv = claude_argv(exe, args.allow, model, args.effort, str(mcp_file) if mcp_json else None)
         stamp = claude_stamp(model)
         sink_path = str(tmp)
 
-    with open(sink_path, "wb") as sink:
-        returncode, stderr = run_bounded(argv, stdin_bytes=packet, stdout=sink, cwd=repo, timeout=args.timeout)
+    try:
+        with open(sink_path, "wb") as sink:
+            returncode, stderr = run_bounded(argv, stdin_bytes=packet, stdout=sink, cwd=repo, timeout=args.timeout)
+    finally:
+        if args.engine != "codex":
+            mcp_file.unlink(missing_ok=True)
     if returncode is None:
         print(f"engine timeout after {args.timeout} s", file=sys.stderr)
         return EXIT_TIMEOUT
