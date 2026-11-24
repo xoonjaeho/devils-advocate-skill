@@ -745,11 +745,14 @@ def claude_tools(allow: list[str]) -> str:
 def codex_argv(
     codex: str, repo: str, out: str, method: str, model: str | None = None, effort: str = "high"
 ) -> list[str]:
-    """Build the `codex exec` argv; without `model` there is no `-m`, so an active profile keeps choosing it."""
+    """Build the `codex exec` argv; without `model` there is no `-m`, so an active profile keeps choosing it.
+
+    `--skip-git-repo-check` lets a non-git path target (which `build` accepts) run; inside a repo it is a no-op.
+    """
     sandbox = "workspace-write" if method == "TEST" else "read-only"
     model_args = ["-m", model] if model else []
     return [
-        codex, "exec", "-s", sandbox, "-C", repo, *model_args,
+        codex, "exec", "--skip-git-repo-check", "-s", sandbox, "-C", repo, *model_args,
         "-c", f"model_reasoning_effort={effort}", "-o", out, "-",
     ]
 

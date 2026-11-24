@@ -123,9 +123,12 @@ def test_codex_static_argv_and_stdin(tmp_path, env, packet):
     assert out.read_text(encoding="utf-8") == DOC
     log = logged(env)
     argv = log["argv"]
-    assert argv[:7] == ["exec", "-s", "read-only", "-C", str(repo.resolve()), "-c", "model_reasoning_effort=high"]
-    assert argv[7] == "-o" and argv[9] == "-" and len(argv) == 10
-    assert Path(argv[8]).parent == out.resolve().parent and Path(argv[8]) != out.resolve()
+    assert argv[:8] == [
+        "exec", "--skip-git-repo-check", "-s", "read-only", "-C", str(repo.resolve()),
+        "-c", "model_reasoning_effort=high",
+    ]
+    assert argv[8] == "-o" and argv[10] == "-" and len(argv) == 11
+    assert Path(argv[9]).parent == out.resolve().parent and Path(argv[9]) != out.resolve()
     assert log["stdin"] == "packet 한글\n"
 
 
@@ -137,11 +140,11 @@ def test_codex_test_method_uses_workspace_write_and_never_passes_model(tmp_path,
     assert result.returncode == 0, result.stderr
     assert result.stdout == "expect: gpt-x\n"
     argv = logged(env)["argv"]
-    assert argv[:7] == [
-        "exec", "-s", "workspace-write", "-C", str(repo.resolve()),
+    assert argv[:8] == [
+        "exec", "--skip-git-repo-check", "-s", "workspace-write", "-C", str(repo.resolve()),
         "-c", "model_reasoning_effort=high",
     ]
-    assert argv[7] == "-o" and argv[9] == "-" and len(argv) == 10
+    assert argv[8] == "-o" and argv[10] == "-" and len(argv) == 11
     assert "-m" not in argv
 
 
@@ -416,12 +419,12 @@ def test_codex_model_and_effort_reach_argv_and_expect(tmp_path, env, packet):
     assert result.returncode == 0, result.stderr
     assert result.stdout == "expect: gpt-6.2-astra\n"
     argv = logged(env)["argv"]
-    assert argv[:8] == [
-        "exec", "-s", "read-only", "-C", str(repo.resolve()),
+    assert argv[:9] == [
+        "exec", "--skip-git-repo-check", "-s", "read-only", "-C", str(repo.resolve()),
         "-m", "gpt-6.2-astra", "-c",
     ]
-    assert argv[8] == "model_reasoning_effort=xhigh"
-    assert argv[9] == "-o" and argv[11] == "-" and len(argv) == 12
+    assert argv[9] == "model_reasoning_effort=xhigh"
+    assert argv[10] == "-o" and argv[12] == "-" and len(argv) == 13
 
 
 def test_codex_model_flag_overrides_config_stamp(tmp_path, env, packet):
