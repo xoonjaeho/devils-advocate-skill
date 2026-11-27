@@ -802,6 +802,8 @@ def run_bounded(
     proc = subprocess.Popen(
         argv,
         cwd=cwd,
+        # Orca's hooks would treat the nested reviewer session as this terminal's agent lane.
+        env={name: value for name, value in os.environ.items() if not name.startswith("ORCA_")},
         stdin=subprocess.DEVNULL if stdin_bytes is None else subprocess.PIPE,
         stdout=stdout,
         stderr=subprocess.PIPE,

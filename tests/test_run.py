@@ -33,7 +33,9 @@ mcp = None
 if "--mcp-config" in argv:
     mcp = open(argv[argv.index("--mcp-config") + 1], encoding="utf-8").read()
 with open(os.environ["FAKE_LOG"], "w", encoding="utf-8") as f:
-    json.dump({"argv": argv, "stdin": stdin.decode("utf-8"), "mcp": mcp}, f)
+    orca = sorted(name for name in os.environ if name.startswith("ORCA_"))
+    json.dump({"argv": argv, "stdin": stdin.decode("utf-8"), "mcp": mcp, "orca": orca,
+               "kept": os.environ.get("KEEP_ORCA_UNRELATED")}, f)
 if mode == "sleep":
     time.sleep(30)
 if mode == "fail":
@@ -220,6 +222,18 @@ def test_claude_without_user_servers_passes_no_mcp_config(tmp_path, env, packet)
     assert result.returncode == 0, result.stderr
     argv = logged(env)["argv"]
     assert "--strict-mcp-config" in argv and "--mcp-config" not in argv
+
+
+@pytest.mark.parametrize("engine", ["codex", "claude"])
+def test_engine_env_drops_only_orca_variables(tmp_path, env, packet, engine):
+    child_env = {**env, "ORCA_TERMINAL_HANDLE": "term_x", "ORCA_AGENT_LAUNCH": "1", "KEEP_ORCA_UNRELATED": "yes"}
+
+    result, _, _ = run(tmp_path, child_env, packet, engine)
+
+    assert result.returncode == 0, result.stderr
+    log = logged(env)
+    assert log["orca"] == []
+    assert log["kept"] == "yes"
 
 
 def test_missing_cli_exits_3(tmp_path, env, packet):

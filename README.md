@@ -36,7 +36,7 @@ The verdict is recomputed by the checker from the findings (rule: `compute_verdi
 target (diff / path / range)
    └─ scripts/advocate.py build   → packet.md  (packet.md + fenced target + TEMPLATE.md, header pre-filled)
         └─ ONE engine, fresh session, output to a file
-             claude : Agent(model: opus) in Claude Code, `claude -p --model opus` in Codex → claude-opus
+             claude : `claude -p --model opus` → claude-opus
              codex  : codex exec -s read-only < packet → codex's default model (advocate.py codex-model)
                       (with --method TEST the sandbox is workspace-write on the reviewed repo, since tests need to write)
               └─ scripts/advocate.py check --expect <engine> --method M --stamp

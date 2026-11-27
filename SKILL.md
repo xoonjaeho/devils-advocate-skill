@@ -36,8 +36,7 @@ Run every command below with `PYTHONUTF8=1`.
 
 | engine | host | `check --expect` value (Reviewer stamp) | runs as |
 |---|---|---|---|
-| claude | Claude Code | `claude-opus` (the `opus` alias, not a pinned id) | `Agent(subagent_type:"general-purpose", model:"opus")`; if the `Agent` tool is unavailable in that session, `run --engine claude` |
-| claude | Codex | `claude-opus` | `run --engine claude` |
+| claude | either | `claude-opus` (the `opus` alias, not a pinned id) | `run --engine claude` |
 | codex | either | the `expect:` line `run` prints (the `--model` id when given) | `run --engine codex [--model M] [--effort E]` |
 
 ## 2. Build
@@ -50,14 +49,13 @@ Omit `target` for the working tree. Exit 1 = packet too large, git error, or eve
 
 ## 3. Dispatch — one engine, output to a file, foreground
 
-- **claude in Claude Code**: `Agent(subagent_type:"general-purpose", model:"opus", prompt: "Read <abs packet path> and do exactly what it says. Write the finished document to <abs out path> with the Write tool (UTF-8) and reply with the single word done. Do not invoke /devils-advocate or any review skill.")`. The subagent must be a fresh session — never write the review in this conversation (the reviewer must not be the session that wrote the change). Expect value: `claude-opus`.
-- **every other case** (`run` does the CLI lookup, login check, sandbox and tool allowlist):
+- Every engine runs through `run`, which does the CLI lookup, login check, sandbox and tool allowlist. The reviewer is a fresh session — never write the review in this conversation (the reviewer must not be the session that wrote the change).
 
   ```bash
   PYTHONUTF8=1 <python> <skill>/scripts/advocate.py run --engine E --repo <repo> --packet <scratch>/tmp_da_packet.md --out <scratch>/tmp_da_out.md --method M [--allow "Bash(<test cmd> *)"]
   ```
 
-  `--model M`: codex `-m M` (omitted → config/profile default); claude `--model M` (default `opus`, stamp `claude-M`). `--effort E`: codex `model_reasoning_effort` (`minimal|low|medium|high|xhigh`, default `high`); claude `--effort` (`low|medium|high|xhigh|max`, default unset); other values exit 2. The agent path above cannot take them: route a non-default model or effort through `run`.
+  `--model M`: codex `-m M` (omitted → config/profile default); claude `--model M` (default `opus`, stamp `claude-M`). `--effort E`: codex `model_reasoning_effort` (`minimal|low|medium|high|xhigh`, default `high`); claude `--effort` (`low|medium|high|xhigh|max`, default unset); other values exit 2.
 
   Foreground; give the host's command timeout the `--timeout` (default 600 s) plus a margin. With `--method TEST`, pass `--allow` for the repo's test command, e.g. `Bash(python -m pytest *)`. With `--method TEST` the codex engine runs with `workspace-write` on the reviewed repo (tests need to write), unlike STATIC's read-only. On success `run` prints one line, `expect: <value>`; that value feeds `check --expect`.
   - Exit 2 unreadable packet or `--out` equal to `--packet` · 3 engine unavailable (CLI missing, codex not logged in or login check timed out, unsafe path for a Windows .cmd shim) · 4 timeout · 5 engine crash · 6 empty output. Report it as such, with the stderr line, and stop. Do not re-dispatch to another engine.
